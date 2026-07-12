@@ -22,12 +22,13 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# Local dev origin is always allowed; the deployed frontend origin comes
-# from the FRONTEND_ORIGIN env var.
+# Local dev origin is always allowed; deployed frontend origins come from
+# the FRONTEND_ORIGIN env var (comma-separated to support domain aliases).
 _allowed_origins = ["http://localhost:3000"]
-_frontend_origin = os.getenv("FRONTEND_ORIGIN")
-if _frontend_origin and _frontend_origin not in _allowed_origins:
-    _allowed_origins.append(_frontend_origin)
+for _origin in os.getenv("FRONTEND_ORIGIN", "").split(","):
+    _origin = _origin.strip().rstrip("/")
+    if _origin and _origin not in _allowed_origins:
+        _allowed_origins.append(_origin)
 
 app.add_middleware(
     CORSMiddleware,

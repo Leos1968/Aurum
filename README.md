@@ -1,6 +1,6 @@
 # Aurum
 
-**Live demo: [aurum-rho-three.vercel.app](https://aurum-rho-three.vercel.app)** (the free-tier API sleeps when idle, so the first search can take up to a minute to wake it)
+**Live demo: [aurum-terminal.vercel.app](https://aurum-terminal.vercel.app)** (the free-tier API sleeps when idle, so the first search can take up to a minute to wake it)
 
 Aurum is an institutional-grade equity valuation terminal with a dark, gold-on-black aesthetic. It pairs a Next.js frontend with a FastAPI backend that serves live market data, and it will grow into a full valuation workbench with DCF models, SEC filings, and exportable tearsheets. This phase is the foundation: the design system, the app shell, and one proven end-to-end data slice from ticker search to live quote.
 
@@ -54,7 +54,7 @@ Both services run locally with zero configuration, the defaults point at each ot
 
 The app is deployed and public:
 
-- Frontend: Vercel at https://aurum-rho-three.vercel.app, project root `frontend/`, env var `NEXT_PUBLIC_API_URL` pointing at the backend URL
+- Frontend: Vercel at https://aurum-terminal.vercel.app, project root `frontend/`, env var `NEXT_PUBLIC_API_URL` pointing at the backend URL
 - Backend: Render at https://aurum-api-bqrb.onrender.com, defined by `render.yaml` at the repo root (root `backend/`, uvicorn start command), env var `FRONTEND_ORIGIN` set to the frontend URL for CORS
 
 To reproduce: deploy the backend first (Render reads `render.yaml` as a Blueprint), then point the frontend at it. Note that `NEXT_PUBLIC_API_URL` is baked in at build time, so changing it on Vercel requires a redeploy.
