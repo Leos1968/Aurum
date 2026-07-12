@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+pydantic
+python-dotenv
+yfinance
+pandas
+numpy
+httpx
+
+# Planned for later phases (SEC filings, Excel export, PDF tearsheets):
+# edgartools
+# openpyxl
+# weasyprint

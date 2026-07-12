@@ -1,0 +1,66 @@
+@import "tailwindcss";
+
+/* Aurum design tokens. Tailwind v4 reads these from CSS instead of
+   tailwind.config.js; each --color-* entry generates the usual utility
+   classes (bg-bg, text-gold, border-border, text-gain, ...). */
+@theme {
+  --color-bg: #0a0a0b;
+  --color-surface: #141417;
+  --color-surface-raised: #1c1c21;
+  --color-border: #2a2a31;
+
+  --color-gold: #d4af37;
+  --color-gold-bright: #f2ce5b;
+  --color-gold-muted: #8a7433;
+
+  --color-gain: #16c784;
+  --color-loss: #ea3943;
+
+  --color-text-primary: #f5f5f7;
+  --color-text-secondary: #9a9aa5;
+  --color-text-tertiary: #6b6b76;
+}
+
+/* Fonts are injected as CSS variables by next/font in layout.tsx.
+   Inter for UI, JetBrains Mono for all financial figures, Newsreader
+   reserved for report and tearsheet headers. */
+@theme inline {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains-mono), ui-monospace, monospace;
+  --font-serif: var(--font-newsreader), ui-serif, Georgia, serif;
+}
+
+body {
+  background-color: var(--color-bg);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: rgb(212 175 55 / 0.3);
+}
+
+/* Thin scrollbar tuned to the dark theme. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--color-border);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-gold-muted);
+}
