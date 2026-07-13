@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from routers import company
+from routers import company, search
 
 # Load backend/.env regardless of the process working directory.
 load_dotenv(Path(__file__).resolve().parent / ".env")
@@ -42,6 +42,7 @@ app.add_middleware(
 )
 
 app.include_router(company.router)
+app.include_router(search.router)
 
 
 @app.get("/api/health")

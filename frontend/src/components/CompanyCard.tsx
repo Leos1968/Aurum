@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { ArrowDownRight, ArrowUpRight } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, Star } from "lucide-react";
 import type { Company } from "@/lib/api";
 
 function formatPrice(price: number, currency: string): string {
@@ -24,7 +24,13 @@ function formatMarketCap(cap: number | null): string {
   return cap.toLocaleString("en-US");
 }
 
-export default function CompanyCard({ company }: { company: Company }) {
+interface CompanyCardProps {
+  company: Company;
+  watched?: boolean;
+  onToggleWatch?: () => void;
+}
+
+export default function CompanyCard({ company, watched, onToggleWatch }: CompanyCardProps) {
   const gaining = company.change >= 0;
   const Arrow = gaining ? ArrowUpRight : ArrowDownRight;
   const sign = gaining ? "+" : "";
@@ -46,6 +52,19 @@ export default function CompanyCard({ company }: { company: Company }) {
               <span className="text-[11px] uppercase tracking-[0.2em] text-text-tertiary">
                 {company.exchange}
               </span>
+            )}
+            {onToggleWatch && (
+              <button
+                type="button"
+                onClick={onToggleWatch}
+                aria-label={watched ? "Remove from watchlist" : "Add to watchlist"}
+                title={watched ? "Remove from watchlist" : "Add to watchlist"}
+                className={`transition ${
+                  watched ? "text-gold" : "text-text-tertiary hover:text-gold"
+                }`}
+              >
+                <Star className="h-4 w-4" fill={watched ? "currentColor" : "none"} aria-hidden />
+              </button>
             )}
           </div>
           <h2 className="mt-3 truncate text-2xl font-semibold tracking-tight">

@@ -1,16 +1,23 @@
 """yfinance wrapper for live market data.
 
 Every public function in this module is no-raise: network failures,
-unknown tickers, and yfinance API quirks all surface as ``None`` so the
-router layer can translate them into clean HTTP errors instead of stack
-traces.
+unknown tickers, and yfinance API quirks all surface as ``None`` (or an
+empty list) so the router layer can translate them into clean HTTP
+errors instead of stack traces.
+
+Responses that hit Yahoo's slower endpoints are memoized in a small
+in-process TTL cache so repeated tab switches don't re-fetch, which
+matters on a single free-tier dyno.
 """
 
 import logging
 import math
 import re
-from typing import Any
+import time
+from datetime import datetime, timezone
+from typing import Any, Callable
 
+import httpx
 import yfinance as yf
 
 logger = logging.getLogger(__name__)
@@ -40,6 +47,39 @@ _EXCHANGE_NAMES = {
     "HKG": "Hong Kong Stock Exchange",
 }
 
+# Chart ranges: UI key -> (yfinance period, bar interval).
+_RANGES = {
+    "1D": ("1d", "5m"),
+    "5D": ("5d", "30m"),
+    "1M": ("1mo", "1d"),
+    "6M": ("6mo", "1d"),
+    "YTD": ("ytd", "1d"),
+    "1Y": ("1y", "1d"),
+    "5Y": ("5y", "1wk"),
+    "MAX": ("max", "1mo"),
+}
+
+# key -> (expires_at_epoch, value)
+_cache: dict[str, tuple[float, Any]] = {}
+
+
+def _cached(key: str, ttl_seconds: float, compute: Callable[[], Any]) -> Any:
+    """Return the cached value for ``key`` or compute and store it.
+
+    ``None`` results are cached briefly too, so a bad ticker can't be
+    used to hammer Yahoo through us.
+    """
+    now = time.time()
+    hit = _cache.get(key)
+    if hit and hit[0] > now:
+        return hit[1]
+    value = compute()
+    _cache[key] = (now + (60 if value is None else ttl_seconds), value)
+    if len(_cache) > 512:  # crude bound; drop expired entries
+        for k in [k for k, (exp, _) in _cache.items() if exp <= now]:
+            _cache.pop(k, None)
+    return value
+
 
 def _safe(getter, default: Any = None) -> Any:
     """Evaluate ``getter`` and swallow any exception, returning ``default``."""
@@ -52,14 +92,23 @@ def _safe(getter, default: Any = None) -> Any:
     return value
 
 
-def _display_name(ticker: yf.Ticker, symbol: str) -> str:
-    """Best-effort company name lookup, falling back to the raw symbol.
+def _clean_symbol(raw_ticker: str) -> str | None:
+    symbol = raw_ticker.strip().upper()
+    return symbol if _TICKER_RE.match(symbol) else None
 
-    ``Ticker.info`` is the only place Yahoo exposes the long name; it is
-    slower than ``fast_info`` and occasionally fails outright, so treat
-    it as a nice-to-have.
-    """
-    info = _safe(lambda: ticker.info, default={}) or {}
+
+def _get_info(symbol: str) -> dict:
+    """``Ticker.info`` with a 10-minute cache; {} when unavailable."""
+    return _cached(
+        f"info:{symbol}",
+        600,
+        lambda: _safe(lambda: yf.Ticker(symbol).info, default={}) or {},
+    )
+
+
+def _display_name(ticker: yf.Ticker, symbol: str) -> str:
+    """Best-effort company name lookup, falling back to the raw symbol."""
+    info = _get_info(symbol)
     return info.get("longName") or info.get("shortName") or symbol
 
 
@@ -70,8 +119,8 @@ def get_company_snapshot(raw_ticker: str) -> dict[str, Any] | None:
     ``None`` when the ticker is malformed, unknown, or Yahoo returns no
     usable price data.
     """
-    symbol = raw_ticker.strip().upper()
-    if not _TICKER_RE.match(symbol):
+    symbol = _clean_symbol(raw_ticker)
+    if symbol is None:
         return None
 
     ticker = yf.Ticker(symbol)
@@ -108,3 +157,284 @@ def get_company_snapshot(raw_ticker: str) -> dict[str, Any] | None:
         "market_cap": _safe(lambda: fast_info.market_cap),
         "exchange": exchange,
     }
+
+
+def get_price_history(raw_ticker: str, range_key: str) -> dict[str, Any] | None:
+    """Closing-price series for one chart range, oldest point first."""
+    symbol = _clean_symbol(raw_ticker)
+    if symbol is None or range_key not in _RANGES:
+        return None
+    period, interval = _RANGES[range_key]
+
+    def compute() -> dict[str, Any] | None:
+        frame = _safe(
+            lambda: yf.Ticker(symbol).history(period=period, interval=interval, auto_adjust=True)
+        )
+        if frame is None or frame.empty or "Close" not in frame:
+            return None
+        closes = frame["Close"].dropna()
+        if closes.empty:
+            return None
+        points = [
+            {"t": ts.isoformat(), "c": round(float(price), 4)}
+            for ts, price in closes.items()
+        ]
+        first, last = points[0]["c"], points[-1]["c"]
+        change = last - first
+        return {
+            "ticker": symbol,
+            "range_key": range_key,
+            "currency": _safe(lambda: yf.Ticker(symbol).fast_info.currency) or "USD",
+            "points": points,
+            "change": round(change, 4),
+            "change_percent": round(change / first * 100, 4) if first else 0.0,
+        }
+
+    # Intraday ranges refresh faster than long ranges.
+    ttl = 120 if range_key in ("1D", "5D") else 900
+    return _cached(f"history:{symbol}:{range_key}", ttl, compute)
+
+
+def _percentish(value: Any) -> float | None:
+    """Convert a 0-1 fraction to percent; pass None through."""
+    return round(float(value) * 100, 2) if isinstance(value, (int, float)) else None
+
+
+def get_key_stats(raw_ticker: str) -> dict[str, Any] | None:
+    """Fundamentals for the Overview tab, from ``Ticker.info``."""
+    symbol = _clean_symbol(raw_ticker)
+    if symbol is None:
+        return None
+    info = _get_info(symbol)
+    if not info:
+        return None
+    price = info.get("currentPrice") or info.get("regularMarketPrice")
+
+    # Yahoo has flip-flopped on whether dividendYield is a fraction or a
+    # percent; deriving it from the absolute dividend rate is unambiguous.
+    dividend_yield = None
+    if info.get("dividendRate") and price:
+        dividend_yield = round(info["dividendRate"] / price * 100, 2)
+
+    return {
+        "ticker": symbol,
+        "currency": info.get("currency") or "USD",
+        "trailing_pe": _safe(lambda: round(float(info["trailingPE"]), 2)),
+        "forward_pe": _safe(lambda: round(float(info["forwardPE"]), 2)),
+        "eps": info.get("trailingEps"),
+        "dividend_yield": dividend_yield,
+        "beta": _safe(lambda: round(float(info["beta"]), 2)),
+        "week52_high": info.get("fiftyTwoWeekHigh"),
+        "week52_low": info.get("fiftyTwoWeekLow"),
+        "volume": info.get("volume") or info.get("regularMarketVolume"),
+        "avg_volume": info.get("averageVolume"),
+        "revenue": info.get("totalRevenue"),
+        "profit_margin": _percentish(info.get("profitMargins")),
+        "return_on_equity": _percentish(info.get("returnOnEquity")),
+        "free_cash_flow": info.get("freeCashflow"),
+        "sector": info.get("sector"),
+        "industry": info.get("industry"),
+        "employees": info.get("fullTimeEmployees"),
+        "website": info.get("website"),
+        "summary": info.get("longBusinessSummary"),
+        "target_mean_price": info.get("targetMeanPrice"),
+        "recommendation": (info.get("recommendationKey") or "").replace("_", " ") or None,
+        "analyst_count": info.get("numberOfAnalystOpinions"),
+    }
+
+
+# Curated line items per statement: (statement key, [(yfinance row, label)]).
+_STATEMENT_ROWS = {
+    "income": [
+        ("Total Revenue", "Total Revenue"),
+        ("Gross Profit", "Gross Profit"),
+        ("Operating Income", "Operating Income"),
+        ("EBITDA", "EBITDA"),
+        ("Net Income", "Net Income"),
+    ],
+    "balance": [
+        ("Total Assets", "Total Assets"),
+        ("Total Liabilities Net Minority Interest", "Total Liabilities"),
+        ("Stockholders Equity", "Stockholders' Equity"),
+        ("Cash And Cash Equivalents", "Cash & Equivalents"),
+        ("Total Debt", "Total Debt"),
+    ],
+    "cash": [
+        ("Operating Cash Flow", "Operating Cash Flow"),
+        ("Investing Cash Flow", "Investing Cash Flow"),
+        ("Financing Cash Flow", "Financing Cash Flow"),
+        ("Capital Expenditure", "Capital Expenditure"),
+        ("Free Cash Flow", "Free Cash Flow"),
+    ],
+}
+
+
+def get_financials(raw_ticker: str, statement: str) -> dict[str, Any] | None:
+    """A curated annual statement (up to four fiscal years, newest first)."""
+    symbol = _clean_symbol(raw_ticker)
+    if symbol is None or statement not in _STATEMENT_ROWS:
+        return None
+
+    def compute() -> dict[str, Any] | None:
+        ticker = yf.Ticker(symbol)
+        frame = _safe(
+            lambda: {
+                "income": ticker.income_stmt,
+                "balance": ticker.balance_sheet,
+                "cash": ticker.cashflow,
+            }[statement]
+        )
+        if frame is None or frame.empty:
+            return None
+        columns = list(frame.columns)[:4]
+        rows = []
+        for source_row, label in _STATEMENT_ROWS[statement]:
+            if source_row not in frame.index:
+                continue
+            values = []
+            for column in columns:
+                value = _safe(lambda: float(frame.loc[source_row, column]))
+                values.append(round(value, 2) if value is not None else None)
+            if any(v is not None for v in values):
+                rows.append({"label": label, "values": values})
+        if not rows:
+            return None
+        return {
+            "ticker": symbol,
+            "statement": statement,
+            "currency": _get_info(symbol).get("financialCurrency")
+            or _get_info(symbol).get("currency")
+            or "USD",
+            "periods": [str(getattr(c, "year", c)) for c in columns],
+            "rows": rows,
+        }
+
+    return _cached(f"financials:{symbol}:{statement}", 3600, compute)
+
+
+def get_news(raw_ticker: str) -> list[dict[str, Any]] | None:
+    """Latest headlines; handles both old and new yfinance news shapes."""
+    symbol = _clean_symbol(raw_ticker)
+    if symbol is None:
+        return None
+
+    def compute() -> list[dict[str, Any]] | None:
+        raw = _safe(lambda: yf.Ticker(symbol).news, default=[]) or []
+        items = []
+        for entry in raw[:10]:
+            content = entry.get("content") or entry
+            title = content.get("title")
+            if not title:
+                continue
+            link = (
+                (content.get("canonicalUrl") or {}).get("url")
+                or (content.get("clickThroughUrl") or {}).get("url")
+                or entry.get("link")
+            )
+            publisher = (content.get("provider") or {}).get("displayName") or entry.get("publisher")
+            published = content.get("pubDate")
+            if not published and entry.get("providerPublishTime"):
+                published = datetime.fromtimestamp(
+                    entry["providerPublishTime"], tz=timezone.utc
+                ).isoformat()
+            items.append(
+                {"title": title, "publisher": publisher, "link": link, "published": published}
+            )
+        return items
+
+    return _cached(f"news:{symbol}", 600, compute)
+
+
+def get_dcf_inputs(raw_ticker: str) -> dict[str, Any] | None:
+    """Fundamental inputs for the client-side interactive DCF model."""
+    symbol = _clean_symbol(raw_ticker)
+    if symbol is None:
+        return None
+
+    def compute() -> dict[str, Any] | None:
+        ticker = yf.Ticker(symbol)
+        fast_info = _safe(lambda: ticker.fast_info)
+        price = _safe(lambda: fast_info.last_price) if fast_info else None
+        if price is None:
+            return None
+        info = _get_info(symbol)
+
+        fcf_history: list[dict[str, Any]] = []
+        cash_flow = _safe(lambda: ticker.cashflow)
+        if cash_flow is not None and not cash_flow.empty and "Free Cash Flow" in cash_flow.index:
+            for column in list(cash_flow.columns)[:4]:
+                value = _safe(lambda: float(cash_flow.loc["Free Cash Flow", column]))
+                if value is not None:
+                    fcf_history.append({"year": int(getattr(column, "year", 0)), "value": value})
+        fcf_history.sort(key=lambda row: row["year"])
+
+        base_fcf = info.get("freeCashflow")
+        if base_fcf is None and fcf_history:
+            base_fcf = fcf_history[-1]["value"]
+
+        # Suggest a growth rate from the historical FCF CAGR, clamped to
+        # a sane band; fall back to a moderate default.
+        suggested_growth = 8.0
+        if len(fcf_history) >= 2 and fcf_history[0]["value"] > 0 and fcf_history[-1]["value"] > 0:
+            years = fcf_history[-1]["year"] - fcf_history[0]["year"]
+            if years > 0:
+                cagr = ((fcf_history[-1]["value"] / fcf_history[0]["value"]) ** (1 / years) - 1) * 100
+                suggested_growth = round(min(max(cagr, 2.0), 20.0), 1)
+
+        net_debt = float(info.get("totalDebt") or 0) - float(info.get("totalCash") or 0)
+        shares = info.get("sharesOutstanding") or _safe(lambda: fast_info.shares)
+
+        return {
+            "ticker": symbol,
+            "currency": (_safe(lambda: fast_info.currency) or "USD"),
+            "price": round(float(price), 4),
+            "shares_outstanding": shares,
+            "net_debt": net_debt,
+            "base_fcf": base_fcf,
+            "fcf_history": fcf_history,
+            "suggested_growth": suggested_growth,
+            "suggested_terminal": 2.5,
+            "suggested_discount": 10.0,
+        }
+
+    return _cached(f"dcf:{symbol}", 1800, compute)
+
+
+def search_tickers(query: str) -> list[dict[str, Any]]:
+    """Autocomplete search against Yahoo's public symbol lookup."""
+    q = query.strip()
+    if len(q) < 1:
+        return []
+
+    def compute() -> list[dict[str, Any]]:
+        try:
+            response = httpx.get(
+                "https://query1.finance.yahoo.com/v1/finance/search",
+                params={"q": q, "quotesCount": 16, "newsCount": 0, "listsCount": 0},
+                headers={"User-Agent": "Mozilla/5.0 (aurum-terminal)"},
+                timeout=6,
+            )
+            response.raise_for_status()
+            quotes = response.json().get("quotes", [])
+        except Exception:
+            logger.info("Symbol search failed for %r", q)
+            return []
+        results = []
+        for quote in quotes:
+            symbol = quote.get("symbol")
+            name = quote.get("shortname") or quote.get("longname")
+            if not symbol or not name:
+                continue
+            if quote.get("quoteType") not in ("EQUITY", "ETF", "INDEX"):
+                continue
+            results.append(
+                {
+                    "symbol": symbol,
+                    "name": name,
+                    "exchange": quote.get("exchDisp"),
+                    "type": quote.get("quoteType"),
+                }
+            )
+        return results[:8]
+
+    return _cached(f"search:{q.lower()}", 3600, compute)

@@ -2,7 +2,20 @@
 
 **Live demo: [aurum-terminal.vercel.app](https://aurum-terminal.vercel.app)** (the free-tier API sleeps when idle, so the first search can take up to a minute to wake it)
 
-Aurum is an institutional-grade equity valuation terminal with a dark, gold-on-black aesthetic. It pairs a Next.js frontend with a FastAPI backend that serves live market data, and it will grow into a full valuation workbench with DCF models, SEC filings, and exportable tearsheets. This phase is the foundation: the design system, the app shell, and one proven end-to-end data slice from ticker search to live quote.
+Aurum is an institutional-grade equity research and valuation terminal with a dark, gold-on-black aesthetic. It pairs a Next.js frontend with a FastAPI backend serving live market data, and rolls the tools that are usually scattered across several sites into one screen: quotes, charts, fundamentals, financial statements, analyst consensus, news, and an interactive DCF valuation model.
+
+## Features
+
+- Ticker autocomplete: search any company by name or symbol, keyboard-navigable dropdown of global matches
+- Live quote header: price, day change, market cap, and exchange, with a watchlist star (persists in the browser)
+- Interactive price chart: 1D to MAX ranges with tooltips, built on Recharts
+- Key statistics: P/E (trailing and forward), EPS, dividend yield, beta, 52-week range, volume, margins, ROE, free cash flow
+- Analyst consensus: mean price target, implied upside vs. the live price, and recommendation with analyst count
+- Financial statements: income statement, balance sheet, and cash flow, four fiscal years side by side
+- Interactive DCF valuation: live free-cash-flow fundamentals with adjustable growth, terminal, and discount assumptions; intrinsic value per share and an under/overvalued verdict recomputed as you drag the sliders (educational model, not investment advice)
+- News feed: latest headlines for the active ticker
+
+Planned next: SEC filing analysis and PDF/Excel tearsheet export.
 
 ## Stack
 
