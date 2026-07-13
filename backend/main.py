@@ -33,6 +33,9 @@ for _origin in os.getenv("FRONTEND_ORIGIN", "").split(","):
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
+    # Any deployment of this app's Vercel project (production domains and
+    # preview builds) is allowed without needing an env var change.
+    allow_origin_regex=r"https://aurum-[a-z0-9-]*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
