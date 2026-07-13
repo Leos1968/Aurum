@@ -101,6 +101,20 @@ export interface SearchResult {
   type: string | null;
 }
 
+export interface StripQuote {
+  symbol: string;
+  label: string;
+  price: number;
+  changePercent: number;
+}
+
+export interface Mover {
+  symbol: string;
+  name: string;
+  price: number;
+  changePercent: number;
+}
+
 /** Error carrying the API's user-facing message and HTTP status. */
 export class ApiError extends Error {
   readonly status: number;
@@ -165,3 +179,22 @@ export const searchTickers = async (query: string): Promise<SearchResult[]> => {
   );
   return data.results;
 };
+
+export const getMarketTape = async (): Promise<StripQuote[]> =>
+  (await request<{ items: StripQuote[] }>("/api/market/tape")).items;
+
+export const getSectors = async (): Promise<StripQuote[]> =>
+  (await request<{ items: StripQuote[] }>("/api/market/sectors")).items;
+
+export const getWatchQuotes = async (symbols: string[]): Promise<StripQuote[]> =>
+  (
+    await request<{ items: StripQuote[] }>(
+      `/api/market/quotes?symbols=${encodeURIComponent(symbols.join(","))}`,
+    )
+  ).items;
+
+export const getMovers = async (kind: string): Promise<Mover[]> =>
+  (await request<{ kind: string; items: Mover[] }>(`/api/market/movers?kind=${kind}`)).items;
+
+export const getMarketNews = async (): Promise<NewsItem[]> =>
+  (await request<{ items: NewsItem[] }>("/api/market/news")).items;

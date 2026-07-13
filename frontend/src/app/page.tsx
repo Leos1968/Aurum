@@ -4,8 +4,9 @@ import { useCallback, useEffect, useState } from "react";
 import NavBar from "@/components/NavBar";
 import CompanyCard from "@/components/CompanyCard";
 import CompanyCardSkeleton from "@/components/CompanyCardSkeleton";
-import EmptyState from "@/components/EmptyState";
+import Dashboard from "@/components/Dashboard";
 import ErrorState from "@/components/ErrorState";
+import MarketTape from "@/components/MarketTape";
 import PriceChart from "@/components/PriceChart";
 import Tabs from "@/components/Tabs";
 import OverviewTab from "@/components/OverviewTab";
@@ -99,8 +100,9 @@ export default function Home() {
   return (
     <div className="flex min-h-screen flex-col">
       <NavBar onSearch={search} />
+      <MarketTape onSelect={search} />
 
-      {watchlist.length > 0 && (
+      {watchlist.length > 0 && view.status !== "idle" && (
         <div className="border-b border-border/60 bg-surface/40">
           <div className="mx-auto flex w-full max-w-6xl items-center gap-2 overflow-x-auto px-6 py-2">
             <span className="shrink-0 text-[11px] uppercase tracking-[0.2em] text-text-tertiary">
@@ -127,13 +129,13 @@ export default function Home() {
           className="pointer-events-none absolute inset-x-0 top-0 h-80 bg-[radial-gradient(ellipse_at_top,rgba(212,175,55,0.08),transparent_65%)]"
         />
 
-        <div className="relative mx-auto w-full max-w-4xl px-6 pb-24 pt-12">
+        <div className="relative mx-auto w-full max-w-4xl px-6 pb-24 pt-10">
           <p className="text-center text-[11px] font-medium uppercase tracking-[0.35em] text-gold-muted">
             Equity Valuation Terminal
           </p>
 
-          <div className="mt-8">
-            {view.status === "idle" && <EmptyState onSelect={search} />}
+          <div className="mt-6">
+            {view.status === "idle" && <Dashboard watchlist={watchlist} onSelect={search} />}
             {view.status === "loading" && <CompanyCardSkeleton />}
             {view.status === "error" && <ErrorState message={view.message} />}
             {view.status === "success" && (

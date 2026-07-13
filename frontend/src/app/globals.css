@@ -64,3 +64,14 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background-color: var(--color-gold-muted);
 }
+
+/* Seamless marquee for the market tape: the strip holds two copies of
+   the quote list, so sliding half its width loops perfectly. */
+@keyframes aurum-tape {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}

@@ -23,8 +23,9 @@ import yfinance as yf
 logger = logging.getLogger(__name__)
 
 # Tickers are short and alphanumeric, with a few separator characters
-# for share classes and international listings (BRK.B, RDS-A, 7203.T).
-_TICKER_RE = re.compile(r"^[A-Z0-9][A-Z0-9.\-^=]{0,11}$")
+# for share classes, international listings, futures, and FX pairs
+# (BRK.B, RDS-A, 7203.T, GC=F, EURUSD=X); indices lead with ^ (^GSPC).
+_TICKER_RE = re.compile(r"^\^?[A-Z0-9][A-Z0-9.\-^=]{0,11}$")
 
 # Yahoo reports its own internal exchange codes; map the common ones to
 # names people actually recognize. Unmapped codes pass through as-is.
@@ -398,6 +399,155 @@ def get_dcf_inputs(raw_ticker: str) -> dict[str, Any] | None:
         }
 
     return _cached(f"dcf:{symbol}", 1800, compute)
+
+
+# Instruments on the market tape: (symbol, display label).
+_TAPE_SYMBOLS = [
+    ("^GSPC", "S&P 500"),
+    ("^IXIC", "Nasdaq"),
+    ("^DJI", "Dow Jones"),
+    ("^RUT", "Russell 2000"),
+    ("^VIX", "VIX"),
+    ("^TNX", "10Y Yield"),
+    ("GC=F", "Gold"),
+    ("CL=F", "Crude Oil"),
+    ("BTC-USD", "Bitcoin"),
+    ("EURUSD=X", "EUR/USD"),
+]
+
+# S&P sector ETFs used as the sector performance proxy.
+_SECTOR_SYMBOLS = [
+    ("XLK", "Technology"),
+    ("XLF", "Financials"),
+    ("XLV", "Health Care"),
+    ("XLY", "Cons. Discretionary"),
+    ("XLP", "Cons. Staples"),
+    ("XLE", "Energy"),
+    ("XLI", "Industrials"),
+    ("XLU", "Utilities"),
+    ("XLB", "Materials"),
+    ("XLRE", "Real Estate"),
+    ("XLC", "Communications"),
+]
+
+_SCREENER_KEYS = {
+    "gainers": "day_gainers",
+    "losers": "day_losers",
+    "actives": "most_actives",
+}
+
+
+def _batch_quotes(symbols: list[str]) -> dict[str, dict[str, float]]:
+    """Last price and day change for many symbols in one download call."""
+
+    def compute() -> dict[str, dict[str, float]]:
+        frame = _safe(
+            lambda: yf.download(
+                " ".join(symbols),
+                period="5d",
+                interval="1d",
+                group_by="ticker",
+                progress=False,
+                threads=True,
+            )
+        )
+        quotes: dict[str, dict[str, float]] = {}
+        if frame is None or frame.empty:
+            return quotes
+        for symbol in symbols:
+            closes = _safe(lambda: frame[symbol]["Close"].dropna())
+            if closes is None or len(closes) == 0:
+                continue
+            price = float(closes.iloc[-1])
+            previous = float(closes.iloc[-2]) if len(closes) > 1 else price
+            change_percent = (price / previous - 1) * 100 if previous else 0.0
+            quotes[symbol] = {
+                "price": round(price, 4),
+                "change_percent": round(change_percent, 4),
+            }
+        return quotes
+
+    return _cached(f"batch:{','.join(symbols)}", 150, compute) or {}
+
+
+def _labelled_quotes(pairs: list[tuple[str, str]]) -> list[dict[str, Any]]:
+    quotes = _batch_quotes([symbol for symbol, _ in pairs])
+    return [
+        {"symbol": symbol, "label": label, **quotes[symbol]}
+        for symbol, label in pairs
+        if symbol in quotes
+    ]
+
+
+def get_market_tape() -> list[dict[str, Any]]:
+    """Index/commodity/crypto strip shown across the top of the app."""
+    return _labelled_quotes(_TAPE_SYMBOLS)
+
+
+def get_sector_performance() -> list[dict[str, Any]]:
+    """Day change per S&P sector ETF for the dashboard heatmap."""
+    return _labelled_quotes(_SECTOR_SYMBOLS)
+
+
+def get_watch_quotes(raw_symbols: list[str]) -> list[dict[str, Any]]:
+    """Live quotes for a user's watchlist (capped, validated symbols)."""
+    symbols = []
+    for raw in raw_symbols[:20]:
+        symbol = _clean_symbol(raw)
+        if symbol and symbol not in symbols:
+            symbols.append(symbol)
+    if not symbols:
+        return []
+    quotes = _batch_quotes(symbols)
+    return [
+        {"symbol": symbol, "label": symbol, **quotes[symbol]}
+        for symbol in symbols
+        if symbol in quotes
+    ]
+
+
+def get_movers(kind: str) -> list[dict[str, Any]] | None:
+    """Top gainers/losers/most-active rows from Yahoo's screener."""
+    screener_key = _SCREENER_KEYS.get(kind)
+    if screener_key is None:
+        return None
+
+    def compute() -> list[dict[str, Any]] | None:
+        try:
+            response = yf.screen(screener_key, count=10)
+        except Exception:
+            logger.info("Screener %s unavailable", screener_key)
+            return None
+        quotes = response.get("quotes", []) if isinstance(response, dict) else []
+        movers = []
+        for quote in quotes:
+            symbol = quote.get("symbol")
+            price = quote.get("regularMarketPrice")
+            change_percent = quote.get("regularMarketChangePercent")
+            if not symbol or price is None or change_percent is None:
+                continue
+            movers.append(
+                {
+                    "symbol": symbol,
+                    "name": quote.get("shortName") or quote.get("longName") or symbol,
+                    "price": round(float(price), 4),
+                    "change_percent": round(float(change_percent), 4),
+                }
+            )
+        # Yahoo's screener ordering is unreliable outside market hours;
+        # enforce the order the panel promises.
+        if kind == "gainers":
+            movers.sort(key=lambda m: m["change_percent"], reverse=True)
+        elif kind == "losers":
+            movers.sort(key=lambda m: m["change_percent"])
+        return movers[:8] or None
+
+    return _cached(f"movers:{kind}", 300, compute)
+
+
+def get_market_news() -> list[dict[str, Any]] | None:
+    """General market headlines, using the SPY feed as a market proxy."""
+    return get_news("SPY")
 
 
 def search_tickers(query: str) -> list[dict[str, Any]]:

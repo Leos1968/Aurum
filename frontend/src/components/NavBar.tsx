@@ -2,11 +2,95 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { FileSpreadsheet, FileText, Search } from "lucide-react";
+import { ChevronDown, FileSpreadsheet, FileText, Search } from "lucide-react";
 import { searchTickers, type SearchResult } from "@/lib/api";
 
 interface NavBarProps {
   onSearch: (ticker: string) => void;
+}
+
+const MARKET_GROUPS: { heading: string; items: { symbol: string; label: string }[] }[] = [
+  {
+    heading: "Indices",
+    items: [
+      { symbol: "^GSPC", label: "S&P 500" },
+      { symbol: "^IXIC", label: "Nasdaq Composite" },
+      { symbol: "^DJI", label: "Dow Jones" },
+      { symbol: "^RUT", label: "Russell 2000" },
+      { symbol: "^VIX", label: "VIX" },
+    ],
+  },
+  {
+    heading: "Commodities",
+    items: [
+      { symbol: "GC=F", label: "Gold" },
+      { symbol: "CL=F", label: "Crude Oil" },
+    ],
+  },
+  {
+    heading: "Crypto & FX",
+    items: [
+      { symbol: "BTC-USD", label: "Bitcoin" },
+      { symbol: "ETH-USD", label: "Ethereum" },
+      { symbol: "EURUSD=X", label: "EUR/USD" },
+    ],
+  },
+];
+
+function MarketsMenu({ onSearch }: { onSearch: (ticker: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: MouseEvent) => {
+      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="flex h-9 items-center gap-1.5 rounded-lg border border-border bg-surface px-3 text-xs font-medium text-text-secondary transition hover:border-gold/40 hover:text-text-primary"
+      >
+        Markets
+        <ChevronDown
+          className={`h-3.5 w-3.5 text-text-tertiary transition-transform ${open ? "rotate-180" : ""}`}
+          aria-hidden
+        />
+      </button>
+      {open && (
+        <div className="absolute right-0 z-50 mt-2 w-52 overflow-hidden rounded-xl border border-border bg-surface-raised py-1 shadow-[0_16px_48px_rgba(0,0,0,0.55)]">
+          {MARKET_GROUPS.map((group) => (
+            <div key={group.heading}>
+              <p className="px-4 pb-1 pt-2.5 text-[10px] font-medium uppercase tracking-[0.2em] text-text-tertiary">
+                {group.heading}
+              </p>
+              {group.items.map((item) => (
+                <button
+                  key={item.symbol}
+                  type="button"
+                  onClick={() => {
+                    setOpen(false);
+                    onSearch(item.symbol);
+                  }}
+                  className="flex w-full items-center justify-between gap-2 px-4 py-1.5 text-left text-sm text-text-secondary transition hover:bg-surface hover:text-text-primary"
+                >
+                  {item.label}
+                  <span className="font-mono text-[11px] text-text-tertiary">{item.symbol}</span>
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function NavBar({ onSearch }: NavBarProps) {
@@ -139,6 +223,7 @@ export default function NavBar({ onSearch }: NavBarProps) {
         </form>
 
         <div className="flex shrink-0 items-center gap-2">
+          <MarketsMenu onSearch={onSearch} />
           <button
             type="button"
             disabled

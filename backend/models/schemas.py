@@ -128,6 +128,37 @@ class DcfInputsResponse(BaseModel):
     suggested_discount: float = Field(serialization_alias="suggestedDiscount")
 
 
+class StripQuote(BaseModel):
+    """A labelled quote on the market tape, sector grid, or watchlist."""
+
+    symbol: str
+    label: str
+    price: float
+    change_percent: float = Field(serialization_alias="changePercent")
+
+
+class QuoteStripResponse(BaseModel):
+    items: list[StripQuote]
+
+
+class Mover(BaseModel):
+    """One row in the gainers/losers/most-active panel."""
+
+    symbol: str
+    name: str
+    price: float
+    change_percent: float = Field(serialization_alias="changePercent")
+
+
+class MoversResponse(BaseModel):
+    kind: str
+    items: list[Mover]
+
+
+class MarketNewsResponse(BaseModel):
+    items: list[NewsItem]
+
+
 class SearchResult(BaseModel):
     """One row in the ticker autocomplete dropdown."""
 
