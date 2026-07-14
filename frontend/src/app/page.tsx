@@ -99,7 +99,7 @@ export default function Home() {
 
   return (
     <div className="flex min-h-screen flex-col">
-      <NavBar onSearch={search} />
+      <NavBar onSearch={search} onHome={() => setView({ status: "idle" })} />
       <MarketTape onSelect={search} />
 
       {watchlist.length > 0 && view.status !== "idle" && (

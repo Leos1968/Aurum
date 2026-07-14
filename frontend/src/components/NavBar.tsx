@@ -1,12 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import { ChevronDown, FileSpreadsheet, FileText, Search } from "lucide-react";
 import { searchTickers, type SearchResult } from "@/lib/api";
 
 interface NavBarProps {
   onSearch: (ticker: string) => void;
+  onHome: () => void;
 }
 
 const MARKET_GROUPS: { heading: string; items: { symbol: string; label: string }[] }[] = [
@@ -93,7 +93,7 @@ function MarketsMenu({ onSearch }: { onSearch: (ticker: string) => void }) {
   );
 }
 
-export default function NavBar({ onSearch }: NavBarProps) {
+export default function NavBar({ onSearch, onHome }: NavBarProps) {
   const [value, setValue] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [open, setOpen] = useState(false);
@@ -165,11 +165,17 @@ export default function NavBar({ onSearch }: NavBarProps) {
   return (
     <header className="sticky top-0 z-50 border-b border-border bg-bg/85 backdrop-blur-md">
       <div className="mx-auto flex h-16 w-full max-w-6xl items-center gap-4 px-6">
-        <Link href="/" className="shrink-0 select-none" aria-label="Aurum home">
+        <button
+          type="button"
+          onClick={onHome}
+          className="shrink-0 cursor-pointer select-none"
+          aria-label="Back to market dashboard"
+          title="Back to market dashboard"
+        >
           <span className="bg-gradient-to-b from-gold-bright to-gold bg-clip-text font-serif text-[1.7rem] leading-none tracking-tight text-transparent">
             Aurum
           </span>
-        </Link>
+        </button>
 
         <form onSubmit={handleSubmit} className="flex min-w-0 flex-1 justify-center">
           <div ref={boxRef} className="relative w-full max-w-md">
