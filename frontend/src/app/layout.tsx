@@ -37,7 +37,11 @@ export const metadata: Metadata = {
     description,
     url: siteUrl,
     siteName: "Aurum",
-    type: "website",
+    // "article" (not "website") is what makes Next.js emit the
+    // article:author OG tag, which is what LinkedIn's link inspector
+    // actually reads for the Author field.
+    type: "article",
+    authors: ["Jeriel De Leon"],
   },
   twitter: {
     card: "summary_large_image",
