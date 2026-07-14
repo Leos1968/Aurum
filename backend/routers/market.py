@@ -2,7 +2,12 @@
 
 from fastapi import APIRouter, HTTPException, Query
 
-from models.schemas import MarketNewsResponse, MoversResponse, QuoteStripResponse
+from models.schemas import (
+    CompsResponse,
+    MarketNewsResponse,
+    MoversResponse,
+    QuoteStripResponse,
+)
 from services import market_data
 
 router = APIRouter(prefix="/api/market", tags=["market"])
@@ -35,6 +40,12 @@ def get_movers(
     if movers is None:
         raise HTTPException(status_code=503, detail="Screener data is unavailable right now.")
     return MoversResponse(kind=kind, items=movers)
+
+
+@router.get("/comps", response_model=CompsResponse)
+def get_comps(symbols: str = Query(min_length=1, max_length=200)) -> CompsResponse:
+    """Trading multiples for a comma-separated ticker list (comps table)."""
+    return CompsResponse(rows=market_data.get_comps(symbols.split(",")))
 
 
 @router.get("/news", response_model=MarketNewsResponse)

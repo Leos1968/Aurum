@@ -13,6 +13,10 @@ Aurum is an institutional-grade equity research and valuation terminal with a da
 - Analyst consensus: mean price target, implied upside vs. the live price, and recommendation with analyst count
 - Financial statements: income statement, balance sheet, and cash flow, four fiscal years side by side
 - Interactive DCF valuation: live free-cash-flow fundamentals with adjustable growth, terminal, and discount assumptions; intrinsic value per share and an under/overvalued verdict recomputed as you drag the sliders (educational model, not investment advice)
+- Interactive LBO model: live EBITDA with adjustable entry/exit multiples, leverage, interest rate, and growth; projects IRR and MoIC against the typical PE hurdle
+- Comparable companies: build a peer set and compare P/E, EV/EBITDA, and EV/Revenue with a computed peer median, target row highlighted
+- Live market dashboard homepage: scrolling index/commodity/crypto tape, top gainers/losers/most active, S&P sector heatmap, market headlines, and watchlist quotes
+- Research hub (/research): written investment frameworks that deep-link into the live models
 - News feed: latest headlines for the active ticker
 
 Planned next: SEC filing analysis and PDF/Excel tearsheet export.

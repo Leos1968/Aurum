@@ -8,6 +8,7 @@ from models.schemas import (
     FinancialsResponse,
     HistoryResponse,
     KeyStatsResponse,
+    LboInputsResponse,
     NewsResponse,
 )
 from services import market_data
@@ -89,3 +90,12 @@ def get_dcf(ticker: str) -> DcfInputsResponse:
     if inputs is None:
         raise _not_found(ticker)
     return DcfInputsResponse(**inputs)
+
+
+@router.get("/{ticker}/lbo", response_model=LboInputsResponse)
+def get_lbo(ticker: str) -> LboInputsResponse:
+    """Fundamental inputs for the interactive LBO model."""
+    inputs = market_data.get_lbo_inputs(ticker)
+    if inputs is None:
+        raise _not_found(ticker)
+    return LboInputsResponse(**inputs)

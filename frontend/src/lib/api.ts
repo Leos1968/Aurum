@@ -101,6 +101,24 @@ export interface SearchResult {
   type: string | null;
 }
 
+export interface LboInputs {
+  ticker: string;
+  name: string;
+  currency: string;
+  ebitda: number | null;
+  suggestedEntryMultiple: number;
+}
+
+export interface CompsRow {
+  symbol: string;
+  name: string;
+  price: number | null;
+  pe: number | null;
+  evEbitda: number | null;
+  evRevenue: number | null;
+  marketCap: number | null;
+}
+
 export interface StripQuote {
   symbol: string;
   label: string;
@@ -179,6 +197,16 @@ export const searchTickers = async (query: string): Promise<SearchResult[]> => {
   );
   return data.results;
 };
+
+export const getLboInputs = (symbol: string) =>
+  request<LboInputs>(`/api/company/${ticker(symbol)}/lbo`);
+
+export const getComps = async (symbols: string[]): Promise<CompsRow[]> =>
+  (
+    await request<{ rows: CompsRow[] }>(
+      `/api/market/comps?symbols=${encodeURIComponent(symbols.join(","))}`,
+    )
+  ).rows;
 
 export const getMarketTape = async (): Promise<StripQuote[]> =>
   (await request<{ items: StripQuote[] }>("/api/market/tape")).items;

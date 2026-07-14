@@ -550,6 +550,61 @@ def get_market_news() -> list[dict[str, Any]] | None:
     return get_news("SPY")
 
 
+def get_lbo_inputs(raw_ticker: str) -> dict[str, Any] | None:
+    """Fundamental inputs for the client-side interactive LBO model."""
+    symbol = _clean_symbol(raw_ticker)
+    if symbol is None:
+        return None
+    info = _get_info(symbol)
+    if not info:
+        return None
+
+    # Seed the entry multiple from where the market currently trades,
+    # clamped to a private-markets-plausible band.
+    suggested = info.get("enterpriseToEbitda")
+    if isinstance(suggested, (int, float)) and suggested > 0:
+        suggested = round(min(max(float(suggested), 5.0), 15.0), 1)
+    else:
+        suggested = 10.0
+
+    return {
+        "ticker": symbol,
+        "name": info.get("longName") or info.get("shortName") or symbol,
+        "currency": info.get("currency") or "USD",
+        "ebitda": info.get("ebitda"),
+        "suggested_entry_multiple": suggested,
+    }
+
+
+def get_comps(raw_symbols: list[str]) -> list[dict[str, Any]]:
+    """Trading multiples for a set of tickers (comps table rows)."""
+    rows = []
+    seen: set[str] = set()
+    for raw in raw_symbols[:8]:
+        symbol = _clean_symbol(raw)
+        if symbol is None or symbol in seen:
+            continue
+        seen.add(symbol)
+        info = _get_info(symbol)
+        if not info:
+            continue
+        name = info.get("longName") or info.get("shortName")
+        if not name:
+            continue
+        rows.append(
+            {
+                "symbol": symbol,
+                "name": name,
+                "price": info.get("currentPrice") or info.get("regularMarketPrice"),
+                "pe": _safe(lambda: round(float(info["trailingPE"]), 1)),
+                "ev_ebitda": _safe(lambda: round(float(info["enterpriseToEbitda"]), 1)),
+                "ev_revenue": _safe(lambda: round(float(info["enterpriseToRevenue"]), 1)),
+                "market_cap": info.get("marketCap"),
+            }
+        )
+    return rows
+
+
 def search_tickers(query: str) -> list[dict[str, Any]]:
     """Autocomplete search against Yahoo's public symbol lookup."""
     q = query.strip()

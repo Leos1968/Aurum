@@ -128,6 +128,32 @@ class DcfInputsResponse(BaseModel):
     suggested_discount: float = Field(serialization_alias="suggestedDiscount")
 
 
+class LboInputsResponse(BaseModel):
+    """Fundamental inputs for the client-side interactive LBO model."""
+
+    ticker: str
+    name: str
+    currency: str
+    ebitda: float | None = None
+    suggested_entry_multiple: float = Field(serialization_alias="suggestedEntryMultiple")
+
+
+class CompsRow(BaseModel):
+    """One company's trading multiples in the comps table."""
+
+    symbol: str
+    name: str
+    price: float | None = None
+    pe: float | None = None
+    ev_ebitda: float | None = Field(default=None, serialization_alias="evEbitda")
+    ev_revenue: float | None = Field(default=None, serialization_alias="evRevenue")
+    market_cap: float | None = Field(default=None, serialization_alias="marketCap")
+
+
+class CompsResponse(BaseModel):
+    rows: list[CompsRow]
+
+
 class StripQuote(BaseModel):
     """A labelled quote on the market tape, sector grid, or watchlist."""
 

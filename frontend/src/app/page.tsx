@@ -12,6 +12,8 @@ import Tabs from "@/components/Tabs";
 import OverviewTab from "@/components/OverviewTab";
 import FinancialsTab from "@/components/FinancialsTab";
 import ValuationTab from "@/components/ValuationTab";
+import LboTab from "@/components/LboTab";
+import CompsTab from "@/components/CompsTab";
 import NewsTab from "@/components/NewsTab";
 import { ApiError, getCompany, type Company } from "@/lib/api";
 
@@ -20,7 +22,9 @@ const WATCHLIST_KEY = "aurum.watchlist";
 const RESEARCH_TABS = [
   { id: "overview", label: "Overview" },
   { id: "financials", label: "Financials" },
-  { id: "valuation", label: "Valuation" },
+  { id: "valuation", label: "DCF" },
+  { id: "lbo", label: "LBO" },
+  { id: "comps", label: "Comps" },
   { id: "news", label: "News" },
 ];
 
@@ -40,6 +44,8 @@ function ResearchPanel({ company }: { company: Company }) {
         {tab === "overview" && <OverviewTab ticker={company.ticker} price={company.price} />}
         {tab === "financials" && <FinancialsTab ticker={company.ticker} />}
         {tab === "valuation" && <ValuationTab ticker={company.ticker} />}
+        {tab === "lbo" && <LboTab ticker={company.ticker} />}
+        {tab === "comps" && <CompsTab ticker={company.ticker} />}
         {tab === "news" && <NewsTab ticker={company.ticker} />}
       </section>
     </div>
@@ -49,25 +55,6 @@ function ResearchPanel({ company }: { company: Company }) {
 export default function Home() {
   const [view, setView] = useState<ViewState>({ status: "idle" });
   const [watchlist, setWatchlist] = useState<string[]>([]);
-
-  // Hydrate the watchlist after mount to avoid SSR mismatches.
-  useEffect(() => {
-    let cancelled = false;
-    const timer = setTimeout(() => {
-      try {
-        const stored = JSON.parse(localStorage.getItem(WATCHLIST_KEY) ?? "[]");
-        if (!cancelled && Array.isArray(stored)) {
-          setWatchlist(stored.filter((t) => typeof t === "string"));
-        }
-      } catch {
-        // Corrupt storage; start fresh.
-      }
-    }, 0);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, []);
 
   const search = useCallback(async (ticker: string) => {
     setView({ status: "loading" });
@@ -82,6 +69,28 @@ export default function Home() {
       setView({ status: "error", message });
     }
   }, []);
+
+  // Hydrate the watchlist after mount (avoids SSR mismatches) and honor
+  // ?ticker= deep links from research notes and shared URLs.
+  useEffect(() => {
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      try {
+        const stored = JSON.parse(localStorage.getItem(WATCHLIST_KEY) ?? "[]");
+        if (!cancelled && Array.isArray(stored)) {
+          setWatchlist(stored.filter((t) => typeof t === "string"));
+        }
+      } catch {
+        // Corrupt storage; start fresh.
+      }
+      const deepLink = new URLSearchParams(window.location.search).get("ticker");
+      if (!cancelled && deepLink) search(deepLink.trim().toUpperCase());
+    }, 0);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [search]);
 
   const toggleWatch = useCallback((ticker: string) => {
     setWatchlist((current) => {
@@ -153,8 +162,37 @@ export default function Home() {
         </div>
       </main>
 
-      <footer className="border-t border-border/60 py-5 text-center text-xs text-text-tertiary">
-        Aurum · Live data via Yahoo Finance · Models are educational, not investment advice
+      <footer className="space-y-1.5 border-t border-border/60 py-5 text-center text-xs text-text-tertiary">
+        <p>
+          Designed &amp; built by{" "}
+          <a
+            href="https://www.linkedin.com/in/jeriel-de-leon-b69551370"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-gold transition hover:text-gold-bright"
+          >
+            Jeriel De Leon
+          </a>{" "}
+          ·{" "}
+          <a
+            href="https://github.com/Leos1968/Aurum"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline decoration-border underline-offset-2 transition hover:text-text-secondary"
+          >
+            GitHub
+          </a>{" "}
+          ·{" "}
+          <a
+            href="/Jeriel-De-Leon-Resume.pdf"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="underline decoration-border underline-offset-2 transition hover:text-text-secondary"
+          >
+            Resume
+          </a>
+        </p>
+        <p>Aurum · Live data via Yahoo Finance · Models are educational, not investment advice</p>
       </footer>
     </div>
   );

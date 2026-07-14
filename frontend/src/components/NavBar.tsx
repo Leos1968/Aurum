@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { ChevronDown, FileSpreadsheet, FileText, Search } from "lucide-react";
 import { searchTickers, type SearchResult } from "@/lib/api";
+import CreatorBadge from "@/components/CreatorBadge";
 
 interface NavBarProps {
   onSearch: (ticker: string) => void;
@@ -229,6 +231,12 @@ export default function NavBar({ onSearch, onHome }: NavBarProps) {
         </form>
 
         <div className="flex shrink-0 items-center gap-2">
+          <Link
+            href="/research"
+            className="hidden h-9 items-center rounded-lg border border-border bg-surface px-3 text-xs font-medium text-text-secondary transition hover:border-gold/40 hover:text-text-primary sm:flex"
+          >
+            Research
+          </Link>
           <MarketsMenu onSearch={onSearch} />
           <button
             type="button"
@@ -248,6 +256,7 @@ export default function NavBar({ onSearch, onHome }: NavBarProps) {
             <FileSpreadsheet className="h-3.5 w-3.5" aria-hidden />
             Excel
           </button>
+          <CreatorBadge />
         </div>
       </div>
     </header>
