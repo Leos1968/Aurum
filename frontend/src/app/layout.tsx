@@ -30,6 +30,8 @@ export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title,
   description,
+  authors: [{ name: "Jeriel De Leon", url: "https://jerieldeleon.netlify.app" }],
+  creator: "Jeriel De Leon",
   openGraph: {
     title,
     description,
