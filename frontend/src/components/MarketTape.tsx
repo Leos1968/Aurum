@@ -57,7 +57,7 @@ export default function MarketTape({ onSelect }: MarketTapeProps) {
   if (quotes.length === 0) return null;
 
   return (
-    <div className="group overflow-hidden border-b border-border bg-surface/50">
+    <div className="group min-w-0 max-w-full overflow-hidden border-b border-border bg-surface/50">
       <div className="flex w-max animate-[aurum-tape_55s_linear_infinite] group-hover:[animation-play-state:paused]">
         {[0, 1].map((copy) => (
           <div key={copy} className="flex" aria-hidden={copy === 1}>

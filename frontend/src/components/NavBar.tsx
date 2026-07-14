@@ -164,7 +164,7 @@ export default function NavBar({ onSearch, onHome }: NavBarProps) {
 
   return (
     <header className="sticky top-0 z-50 border-b border-border bg-bg/85 backdrop-blur-md">
-      <div className="mx-auto flex h-16 w-full max-w-6xl items-center gap-4 px-6">
+      <div className="mx-auto flex h-16 w-full max-w-6xl items-center gap-3 px-4 sm:gap-4 sm:px-6">
         <button
           type="button"
           onClick={onHome}
@@ -234,7 +234,7 @@ export default function NavBar({ onSearch, onHome }: NavBarProps) {
             type="button"
             disabled
             title="PDF export arrives in a later phase"
-            className="flex h-9 cursor-not-allowed items-center gap-1.5 rounded-lg border border-border bg-surface px-3 text-xs font-medium text-text-tertiary"
+            className="hidden h-9 cursor-not-allowed items-center gap-1.5 rounded-lg border border-border bg-surface px-3 text-xs font-medium text-text-tertiary md:flex"
           >
             <FileText className="h-3.5 w-3.5" aria-hidden />
             PDF
@@ -243,7 +243,7 @@ export default function NavBar({ onSearch, onHome }: NavBarProps) {
             type="button"
             disabled
             title="Excel export arrives in a later phase"
-            className="flex h-9 cursor-not-allowed items-center gap-1.5 rounded-lg border border-border bg-surface px-3 text-xs font-medium text-text-tertiary"
+            className="hidden h-9 cursor-not-allowed items-center gap-1.5 rounded-lg border border-border bg-surface px-3 text-xs font-medium text-text-tertiary md:flex"
           >
             <FileSpreadsheet className="h-3.5 w-3.5" aria-hidden />
             Excel

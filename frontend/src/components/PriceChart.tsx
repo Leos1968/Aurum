@@ -111,13 +111,13 @@ export default function PriceChart({ ticker, currency }: PriceChartProps) {
             </span>
           )}
         </div>
-        <div className="flex rounded-lg border border-border bg-surface p-0.5">
+        <div className="flex max-w-full overflow-x-auto rounded-lg border border-border bg-surface p-0.5">
           {RANGES.map((r) => (
             <button
               key={r}
               type="button"
               onClick={() => setRange(r)}
-              className={`rounded-md px-2.5 py-1 font-mono text-xs transition ${
+              className={`shrink-0 rounded-md px-2.5 py-1 font-mono text-xs transition ${
                 r === range
                   ? "bg-gold/15 text-gold"
                   : "text-text-tertiary hover:text-text-secondary"

@@ -101,7 +101,7 @@ export default function ValuationTab({ ticker }: { ticker: string }) {
   return (
     <div className="space-y-6 pt-5">
       <div className="grid gap-6 lg:grid-cols-2">
-        <div className="space-y-5 rounded-xl border border-border bg-surface px-5 py-5">
+        <div className="min-w-0 space-y-5 rounded-xl border border-border bg-surface px-5 py-5">
           <h4 className="text-sm font-semibold uppercase tracking-[0.15em] text-text-secondary">
             Assumptions
           </h4>
@@ -141,7 +141,7 @@ export default function ValuationTab({ ticker }: { ticker: string }) {
           </p>
         </div>
 
-        <div className="flex flex-col justify-between rounded-xl border border-gold/25 bg-gold/5 px-5 py-5">
+        <div className="flex min-w-0 flex-col justify-between rounded-xl border border-gold/25 bg-gold/5 px-5 py-5">
           <div>
             <h4 className="text-sm font-semibold uppercase tracking-[0.15em] text-text-secondary">
               Intrinsic Value

@@ -42,7 +42,7 @@ export default function CompanyCard({ company, watched, onToggleWatch }: Company
       transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
       className="overflow-hidden rounded-2xl border border-border bg-surface-raised shadow-[0_12px_40px_rgba(0,0,0,0.4)]"
     >
-      <div className="flex flex-col gap-8 p-8 sm:flex-row sm:items-start sm:justify-between">
+      <div className="flex flex-col gap-6 p-6 sm:flex-row sm:items-start sm:justify-between sm:gap-8 sm:p-8">
         <div className="min-w-0">
           <div className="flex items-center gap-3">
             <span className="rounded-md border border-gold/30 bg-gold/10 px-2 py-0.5 font-mono text-xs font-medium tracking-wider text-gold">
@@ -73,7 +73,7 @@ export default function CompanyCard({ company, watched, onToggleWatch }: Company
         </div>
 
         <div className="shrink-0 sm:text-right">
-          <p className="font-mono text-4xl font-medium tabular-nums tracking-tight">
+          <p className="font-mono text-3xl font-medium tabular-nums tracking-tight sm:text-4xl">
             {formatPrice(company.price, company.currency)}
           </p>
           <p
@@ -89,7 +89,7 @@ export default function CompanyCard({ company, watched, onToggleWatch }: Company
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-x-10 gap-y-4 border-t border-border bg-surface/60 px-8 py-4">
+      <div className="flex flex-wrap items-center gap-x-8 gap-y-4 border-t border-border bg-surface/60 px-6 py-4 sm:gap-x-10 sm:px-8">
         <Stat label="Market Cap" value={formatMarketCap(company.marketCap)} />
         <Stat label="Currency" value={company.currency} />
         <Stat label="Exchange" value={company.exchange ?? "N/A"} />

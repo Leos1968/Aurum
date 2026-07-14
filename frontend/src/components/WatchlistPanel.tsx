@@ -33,7 +33,7 @@ export default function WatchlistPanel({ watchlist, onSelect }: WatchlistPanelPr
   if (watchlist.length === 0) return null;
 
   return (
-    <section className="rounded-2xl border border-gold/20 bg-surface-raised p-5">
+    <section className="min-w-0 rounded-2xl border border-gold/20 bg-surface-raised p-5">
       <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.15em] text-text-secondary">
         <Star className="h-3.5 w-3.5 text-gold" fill="currentColor" aria-hidden />
         Your Watchlist

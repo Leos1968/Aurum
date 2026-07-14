@@ -26,7 +26,7 @@ export default function MarketNews() {
   }, []);
 
   return (
-    <section className="rounded-2xl border border-border bg-surface-raised p-5">
+    <section className="min-w-0 rounded-2xl border border-border bg-surface-raised p-5">
       <h3 className="mb-2 text-sm font-semibold uppercase tracking-[0.15em] text-text-secondary">
         Market Headlines
       </h3>

@@ -129,7 +129,7 @@ export default function Home() {
           className="pointer-events-none absolute inset-x-0 top-0 h-80 bg-[radial-gradient(ellipse_at_top,rgba(212,175,55,0.08),transparent_65%)]"
         />
 
-        <div className="relative mx-auto w-full max-w-4xl px-6 pb-24 pt-10">
+        <div className="relative mx-auto w-full max-w-4xl px-4 pb-24 pt-10 sm:px-6">
           <p className="text-center text-[11px] font-medium uppercase tracking-[0.35em] text-gold-muted">
             Equity Valuation Terminal
           </p>

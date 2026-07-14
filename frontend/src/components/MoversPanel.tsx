@@ -44,7 +44,7 @@ export default function MoversPanel({ onSelect }: MoversPanelProps) {
   }, [kind, cache, errors]);
 
   return (
-    <section className="rounded-2xl border border-border bg-surface-raised p-5">
+    <section className="min-w-0 rounded-2xl border border-border bg-surface-raised p-5">
       <div className="mb-3 flex items-center justify-between gap-3">
         <h3 className="text-sm font-semibold uppercase tracking-[0.15em] text-text-secondary">
           Market Movers
