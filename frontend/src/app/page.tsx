@@ -8,6 +8,7 @@ import CompanyCardSkeleton from "@/components/CompanyCardSkeleton";
 import Dashboard from "@/components/Dashboard";
 import ErrorState from "@/components/ErrorState";
 import MarketTape from "@/components/MarketTape";
+import SideDrawer from "@/components/SideDrawer";
 import ContentSkeleton from "@/components/ContentSkeleton";
 import { ApiError, getCompany, type Company } from "@/lib/api";
 
@@ -91,6 +92,14 @@ export default function Home() {
         activeTicker={view.status === "success" ? view.company.ticker : null}
       />
       <MarketTape onSelect={search} />
+
+      <SideDrawer
+        mode={
+          view.status === "success"
+            ? { kind: "ticker", company: view.company }
+            : { kind: "home" }
+        }
+      />
 
       {watchlist.length > 0 && view.status !== "idle" && (
         <div className="border-b border-border/60 bg-surface/40">
