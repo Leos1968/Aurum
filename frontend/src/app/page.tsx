@@ -1,56 +1,33 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import NavBar from "@/components/NavBar";
 import CompanyCard from "@/components/CompanyCard";
 import CompanyCardSkeleton from "@/components/CompanyCardSkeleton";
 import Dashboard from "@/components/Dashboard";
 import ErrorState from "@/components/ErrorState";
 import MarketTape from "@/components/MarketTape";
-import PriceChart from "@/components/PriceChart";
-import Tabs from "@/components/Tabs";
-import OverviewTab from "@/components/OverviewTab";
-import FinancialsTab from "@/components/FinancialsTab";
-import ValuationTab from "@/components/ValuationTab";
-import LboTab from "@/components/LboTab";
-import CompsTab from "@/components/CompsTab";
-import NewsTab from "@/components/NewsTab";
+import ContentSkeleton from "@/components/ContentSkeleton";
 import { ApiError, getCompany, type Company } from "@/lib/api";
 
 const WATCHLIST_KEY = "aurum.watchlist";
 
-const RESEARCH_TABS = [
-  { id: "overview", label: "Overview" },
-  { id: "financials", label: "Financials" },
-  { id: "valuation", label: "DCF" },
-  { id: "lbo", label: "LBO" },
-  { id: "comps", label: "Comps" },
-  { id: "news", label: "News" },
-];
+// The research view pulls in the chart library and all six valuation
+// tabs; load it on demand so none of that ships in the homepage bundle.
+const ResearchPanel = dynamic(() => import("@/components/ResearchPanel"), {
+  loading: () => (
+    <div className="mt-6 rounded-2xl border border-border bg-surface-raised p-5">
+      <ContentSkeleton rows={6} />
+    </div>
+  ),
+});
 
 type ViewState =
   | { status: "idle" }
   | { status: "loading" }
   | { status: "success"; company: Company }
   | { status: "error"; message: string };
-
-function ResearchPanel({ company }: { company: Company }) {
-  const [tab, setTab] = useState("overview");
-  return (
-    <div className="mt-6 space-y-6">
-      <PriceChart ticker={company.ticker} currency={company.currency} />
-      <section className="rounded-2xl border border-border bg-surface-raised px-5 pb-5 pt-2">
-        <Tabs tabs={RESEARCH_TABS} active={tab} onChange={setTab} />
-        {tab === "overview" && <OverviewTab ticker={company.ticker} price={company.price} />}
-        {tab === "financials" && <FinancialsTab ticker={company.ticker} />}
-        {tab === "valuation" && <ValuationTab ticker={company.ticker} />}
-        {tab === "lbo" && <LboTab ticker={company.ticker} />}
-        {tab === "comps" && <CompsTab ticker={company.ticker} />}
-        {tab === "news" && <NewsTab ticker={company.ticker} />}
-      </section>
-    </div>
-  );
-}
 
 export default function Home() {
   const [view, setView] = useState<ViewState>({ status: "idle" });
