@@ -1,6 +1,6 @@
 """Company data endpoints."""
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Response
 
 from models.schemas import (
     CompanyResponse,
@@ -11,7 +11,7 @@ from models.schemas import (
     LboInputsResponse,
     NewsResponse,
 )
-from services import market_data
+from services import exporter, market_data
 
 router = APIRouter(prefix="/api/company", tags=["company"])
 
@@ -99,3 +99,31 @@ def get_lbo(ticker: str) -> LboInputsResponse:
     if inputs is None:
         raise _not_found(ticker)
     return LboInputsResponse(**inputs)
+
+
+@router.get("/{ticker}/export/xlsx")
+def export_excel(ticker: str) -> Response:
+    """Formula-driven Excel workbook: DCF model, LBO model, financials."""
+    result = exporter.build_excel_model(ticker)
+    if result is None:
+        raise _not_found(ticker)
+    content, filename = result
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/{ticker}/export/pdf")
+def export_pdf(ticker: str) -> Response:
+    """One-page PDF tearsheet with stats, DCF snapshot, and profile."""
+    result = exporter.build_pdf_tearsheet(ticker)
+    if result is None:
+        raise _not_found(ticker)
+    content, filename = result
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

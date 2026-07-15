@@ -6,8 +6,8 @@ yfinance
 pandas
 numpy
 httpx
+openpyxl
+reportlab
 
-# Planned for later phases (SEC filings, Excel export, PDF tearsheets):
+# Planned for a later phase (SEC filing analysis):
 # edgartools
-# openpyxl
-# weasyprint

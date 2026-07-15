@@ -1,4 +1,12 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+/** Direct-download URL for the formula-driven Excel model. */
+export const excelExportUrl = (symbol: string) =>
+  `${API_URL}/api/company/${encodeURIComponent(symbol.trim().toUpperCase())}/export/xlsx`;
+
+/** Direct-download URL for the one-page PDF tearsheet. */
+export const pdfExportUrl = (symbol: string) =>
+  `${API_URL}/api/company/${encodeURIComponent(symbol.trim().toUpperCase())}/export/pdf`;
 
 export interface Company {
   ticker: string;

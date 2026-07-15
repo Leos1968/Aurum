@@ -3,12 +3,14 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ChevronDown, FileSpreadsheet, FileText, Search } from "lucide-react";
-import { searchTickers, type SearchResult } from "@/lib/api";
+import { excelExportUrl, pdfExportUrl, searchTickers, type SearchResult } from "@/lib/api";
 import CreatorBadge from "@/components/CreatorBadge";
 
 interface NavBarProps {
   onSearch: (ticker: string) => void;
   onHome: () => void;
+  /** Ticker currently open in the research view; enables the export buttons. */
+  activeTicker?: string | null;
 }
 
 const MARKET_GROUPS: { heading: string; items: { symbol: string; label: string }[] }[] = [
@@ -95,7 +97,7 @@ function MarketsMenu({ onSearch }: { onSearch: (ticker: string) => void }) {
   );
 }
 
-export default function NavBar({ onSearch, onHome }: NavBarProps) {
+export default function NavBar({ onSearch, onHome, activeTicker }: NavBarProps) {
   const [value, setValue] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [open, setOpen] = useState(false);
@@ -238,24 +240,47 @@ export default function NavBar({ onSearch, onHome }: NavBarProps) {
             Research
           </Link>
           <MarketsMenu onSearch={onSearch} />
-          <button
-            type="button"
-            disabled
-            title="PDF export arrives in a later phase"
-            className="hidden h-9 cursor-not-allowed items-center gap-1.5 rounded-lg border border-border bg-surface px-3 text-xs font-medium text-text-tertiary md:flex"
-          >
-            <FileText className="h-3.5 w-3.5" aria-hidden />
-            PDF
-          </button>
-          <button
-            type="button"
-            disabled
-            title="Excel export arrives in a later phase"
-            className="hidden h-9 cursor-not-allowed items-center gap-1.5 rounded-lg border border-border bg-surface px-3 text-xs font-medium text-text-tertiary md:flex"
-          >
-            <FileSpreadsheet className="h-3.5 w-3.5" aria-hidden />
-            Excel
-          </button>
+          {activeTicker ? (
+            <>
+              <a
+                href={pdfExportUrl(activeTicker)}
+                title={`Download the ${activeTicker} tearsheet (PDF)`}
+                className="hidden h-9 items-center gap-1.5 rounded-lg border border-border bg-surface px-3 text-xs font-medium text-text-secondary transition hover:border-gold/40 hover:text-gold md:flex"
+              >
+                <FileText className="h-3.5 w-3.5" aria-hidden />
+                PDF
+              </a>
+              <a
+                href={excelExportUrl(activeTicker)}
+                title={`Download the ${activeTicker} DCF & LBO model (Excel)`}
+                className="hidden h-9 items-center gap-1.5 rounded-lg border border-border bg-surface px-3 text-xs font-medium text-text-secondary transition hover:border-gold/40 hover:text-gold md:flex"
+              >
+                <FileSpreadsheet className="h-3.5 w-3.5" aria-hidden />
+                Excel
+              </a>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                disabled
+                title="Search a company first to export its tearsheet"
+                className="hidden h-9 cursor-not-allowed items-center gap-1.5 rounded-lg border border-border bg-surface px-3 text-xs font-medium text-text-tertiary md:flex"
+              >
+                <FileText className="h-3.5 w-3.5" aria-hidden />
+                PDF
+              </button>
+              <button
+                type="button"
+                disabled
+                title="Search a company first to export its model"
+                className="hidden h-9 cursor-not-allowed items-center gap-1.5 rounded-lg border border-border bg-surface px-3 text-xs font-medium text-text-tertiary md:flex"
+              >
+                <FileSpreadsheet className="h-3.5 w-3.5" aria-hidden />
+                Excel
+              </button>
+            </>
+          )}
           <CreatorBadge />
         </div>
       </div>
