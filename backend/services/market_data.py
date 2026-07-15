@@ -13,6 +13,7 @@ matters on a single free-tier dyno.
 import logging
 import math
 import re
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -98,13 +99,195 @@ def _clean_symbol(raw_ticker: str) -> str | None:
     return symbol if _TICKER_RE.match(symbol) else None
 
 
-def _get_info(symbol: str) -> dict:
-    """``Ticker.info`` with a 10-minute cache; {} when unavailable."""
-    return _cached(
-        f"info:{symbol}",
-        600,
-        lambda: _safe(lambda: yf.Ticker(symbol).info, default={}) or {},
+# ---------------------------------------------------------------------------
+# Yahoo fundamentals fetcher
+#
+# yfinance's ``Ticker.info`` (the crumb-gated quoteSummary endpoint) is
+# rate-limited/blocked from datacenter IPs, so it fails on the deployed
+# server even though price/chart endpoints work. We fetch the same data
+# through our own httpx session with explicit cookie + crumb handling and
+# retry-on-stale-crumb, which is far more reliable from cloud hosts, then
+# fall back to the lighter v7 quote endpoint for the core stats.
+# ---------------------------------------------------------------------------
+
+_YF_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json,text/plain,*/*",
+}
+_QS_MODULES = (
+    "price",
+    "summaryDetail",
+    "financialData",
+    "defaultKeyStatistics",
+    "summaryProfile",
+    "assetProfile",
+)
+_yahoo_lock = threading.Lock()
+_yahoo: dict[str, Any] = {"client": None, "crumb": None}
+
+
+def _yahoo_session() -> tuple[httpx.Client | None, str | None]:
+    """Return a (client, crumb) pair, establishing the cookie+crumb once."""
+    with _yahoo_lock:
+        if _yahoo["client"] is None or not _yahoo["crumb"]:
+            client = httpx.Client(headers=_YF_HEADERS, timeout=12, follow_redirects=True)
+            try:
+                client.get("https://fc.yahoo.com")
+            except Exception:
+                pass
+            crumb = None
+            try:
+                resp = client.get("https://query1.finance.yahoo.com/v1/test/getcrumb")
+                if resp.status_code == 200 and resp.text and "<" not in resp.text:
+                    crumb = resp.text.strip()
+            except Exception:
+                crumb = None
+            _yahoo["client"] = client
+            _yahoo["crumb"] = crumb
+        return _yahoo["client"], _yahoo["crumb"]
+
+
+def _reset_yahoo_session() -> None:
+    with _yahoo_lock:
+        client = _yahoo["client"]
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                pass
+        _yahoo["client"] = None
+        _yahoo["crumb"] = None
+
+
+def _yahoo_get(url: str, params: dict[str, Any]) -> dict | None:
+    """GET a crumbed Yahoo JSON endpoint, refreshing the crumb once on 401."""
+    for _ in range(2):
+        client, crumb = _yahoo_session()
+        if client is None or not crumb:
+            _reset_yahoo_session()
+            continue
+        try:
+            resp = client.get(url, params={**params, "crumb": crumb})
+        except Exception:
+            _reset_yahoo_session()
+            continue
+        if resp.status_code == 200:
+            try:
+                return resp.json()
+            except Exception:
+                return None
+        if resp.status_code in (401, 403, 429):
+            _reset_yahoo_session()  # stale crumb or throttle; get a fresh pair
+            continue
+        return None
+    return None
+
+
+def _raw(node: Any, key: str) -> Any:
+    """Pull a value from a Yahoo field that may be a {'raw': ...} wrapper."""
+    if not isinstance(node, dict):
+        return None
+    value = node.get(key)
+    if isinstance(value, dict):
+        return value.get("raw")
+    return value
+
+
+def _fetch_fundamentals(symbol: str) -> dict:
+    """Normalized fundamentals dict with the same keys as ``Ticker.info``."""
+    data = _yahoo_get(
+        f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{symbol}",
+        {"modules": ",".join(_QS_MODULES)},
     )
+    info: dict[str, Any] = {}
+    result = None
+    if data:
+        results = (data.get("quoteSummary") or {}).get("result")
+        if results:
+            result = results[0]
+
+    if result:
+        price = result.get("price") or {}
+        detail = result.get("summaryDetail") or {}
+        fin = result.get("financialData") or {}
+        stats = result.get("defaultKeyStatistics") or {}
+        profile = result.get("summaryProfile") or result.get("assetProfile") or {}
+
+        info["longName"] = price.get("longName")
+        info["shortName"] = price.get("shortName")
+        info["currency"] = price.get("currency") or fin.get("financialCurrency")
+        info["financialCurrency"] = fin.get("financialCurrency") or price.get("currency")
+        info["marketCap"] = _raw(price, "marketCap") or _raw(detail, "marketCap")
+        info["currentPrice"] = _raw(fin, "currentPrice") or _raw(price, "regularMarketPrice")
+        info["regularMarketPrice"] = _raw(price, "regularMarketPrice")
+        info["trailingPE"] = _raw(detail, "trailingPE")
+        info["forwardPE"] = _raw(detail, "forwardPE") or _raw(stats, "forwardPE")
+        info["trailingEps"] = _raw(stats, "trailingEps")
+        info["beta"] = _raw(detail, "beta") or _raw(stats, "beta")
+        info["dividendRate"] = _raw(detail, "dividendRate")
+        info["fiftyTwoWeekHigh"] = _raw(detail, "fiftyTwoWeekHigh")
+        info["fiftyTwoWeekLow"] = _raw(detail, "fiftyTwoWeekLow")
+        info["volume"] = _raw(detail, "volume") or _raw(price, "regularMarketVolume")
+        info["averageVolume"] = _raw(detail, "averageVolume")
+        info["totalRevenue"] = _raw(fin, "totalRevenue")
+        info["profitMargins"] = _raw(fin, "profitMargins") or _raw(stats, "profitMargins")
+        info["returnOnEquity"] = _raw(fin, "returnOnEquity")
+        info["freeCashflow"] = _raw(fin, "freeCashflow")
+        info["ebitda"] = _raw(fin, "ebitda")
+        info["enterpriseToEbitda"] = _raw(stats, "enterpriseToEbitda")
+        info["enterpriseToRevenue"] = _raw(stats, "enterpriseToRevenue")
+        info["totalDebt"] = _raw(fin, "totalDebt")
+        info["totalCash"] = _raw(fin, "totalCash")
+        info["sharesOutstanding"] = _raw(stats, "sharesOutstanding")
+        info["targetMeanPrice"] = _raw(fin, "targetMeanPrice")
+        info["recommendationKey"] = fin.get("recommendationKey")
+        info["numberOfAnalystOpinions"] = _raw(fin, "numberOfAnalystOpinions")
+        info["sector"] = profile.get("sector")
+        info["industry"] = profile.get("industry")
+        info["fullTimeEmployees"] = profile.get("fullTimeEmployees")
+        info["website"] = profile.get("website")
+        info["longBusinessSummary"] = profile.get("longBusinessSummary")
+
+    # Fall back to the lighter v7 quote endpoint for anything still missing
+    # (and as the whole payload if quoteSummary was unavailable).
+    if not info.get("trailingPE") or not info.get("longName"):
+        quote_data = _yahoo_get(
+            "https://query1.finance.yahoo.com/v7/finance/quote", {"symbols": symbol}
+        )
+        quotes = ((quote_data or {}).get("quoteResponse") or {}).get("result") or []
+        if quotes:
+            q = quotes[0]
+            info.setdefault("longName", q.get("longName"))
+            info["longName"] = info.get("longName") or q.get("longName") or q.get("shortName")
+            info.setdefault("shortName", q.get("shortName"))
+            info["currency"] = info.get("currency") or q.get("currency")
+            info["marketCap"] = info.get("marketCap") or q.get("marketCap")
+            info["regularMarketPrice"] = info.get("regularMarketPrice") or q.get("regularMarketPrice")
+            info["currentPrice"] = info.get("currentPrice") or q.get("regularMarketPrice")
+            info["trailingPE"] = info.get("trailingPE") or q.get("trailingPE")
+            info["forwardPE"] = info.get("forwardPE") or q.get("forwardPE")
+            info["trailingEps"] = info.get("trailingEps") or q.get("epsTrailingTwelveMonths")
+            info["fiftyTwoWeekHigh"] = info.get("fiftyTwoWeekHigh") or q.get("fiftyTwoWeekHigh")
+            info["fiftyTwoWeekLow"] = info.get("fiftyTwoWeekLow") or q.get("fiftyTwoWeekLow")
+            info["volume"] = info.get("volume") or q.get("regularMarketVolume")
+            info["averageVolume"] = info.get("averageVolume") or q.get("averageDailyVolume3Month")
+            if not info.get("dividendRate") and q.get("trailingAnnualDividendRate"):
+                info["dividendRate"] = q.get("trailingAnnualDividendRate")
+
+    return {k: v for k, v in info.items() if v is not None}
+
+
+def _get_info(symbol: str) -> dict:
+    """Fundamentals for ``symbol`` with a 10-minute cache; {} if unavailable.
+
+    Returning None from the compute step on failure lets ``_cached`` apply
+    its short negative-cache TTL, so a transient block is retried soon
+    rather than stuck empty for the full window.
+    """
+    return _cached(f"info:{symbol}", 600, lambda: _fetch_fundamentals(symbol) or None) or {}
 
 
 def _display_name(ticker: yf.Ticker, symbol: str) -> str:
