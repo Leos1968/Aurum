@@ -12,8 +12,8 @@ matters on a single free-tier dyno.
 
 import logging
 import math
+import os
 import re
-import threading
 import time
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -100,14 +100,15 @@ def _clean_symbol(raw_ticker: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Yahoo fundamentals fetcher
+# Fundamentals fetcher
 #
-# yfinance's ``Ticker.info`` (the crumb-gated quoteSummary endpoint) is
-# rate-limited/blocked from datacenter IPs, so it fails on the deployed
-# server even though price/chart endpoints work. We fetch the same data
-# through our own httpx session with explicit cookie + crumb handling and
-# retry-on-stale-crumb, which is far more reliable from cloud hosts, then
-# fall back to the lighter v7 quote endpoint for the core stats.
+# Yahoo's fundamentals endpoint (Ticker.info / quoteSummary) is crumb-gated
+# and returns 429 from datacenter IPs, so it works locally but not on the
+# deployed server. Fundamentals therefore come from Financial Modeling Prep
+# when FMP_API_KEY is configured, with Yahoo's keyless chart metadata as a
+# universal base (name, price, 52-week range) and yfinance as a local-dev
+# fallback. Price, chart, tape, movers, and search still use Yahoo directly
+# since those endpoints are not IP-blocked.
 # ---------------------------------------------------------------------------
 
 _YF_HEADERS = {
@@ -117,165 +118,200 @@ _YF_HEADERS = {
     ),
     "Accept": "application/json,text/plain,*/*",
 }
-_QS_MODULES = (
-    "price",
-    "summaryDetail",
-    "financialData",
-    "defaultKeyStatistics",
-    "summaryProfile",
-    "assetProfile",
-)
-_yahoo_lock = threading.Lock()
-_yahoo: dict[str, Any] = {"client": None, "crumb": None}
+FMP_API_KEY = os.getenv("FMP_API_KEY", "").strip()
+_FMP_BASE = "https://financialmodelingprep.com/api/v3"
+
+# Whether we have a working fundamentals provider on this host. Set true
+# when FMP is configured; used by callers to decide graceful degradation.
+HAS_FUNDAMENTALS_PROVIDER = bool(FMP_API_KEY)
 
 
-def _yahoo_session() -> tuple[httpx.Client | None, str | None]:
-    """Return a (client, crumb) pair, establishing the cookie+crumb once."""
-    with _yahoo_lock:
-        if _yahoo["client"] is None or not _yahoo["crumb"]:
-            client = httpx.Client(headers=_YF_HEADERS, timeout=12, follow_redirects=True)
-            try:
-                client.get("https://fc.yahoo.com")
-            except Exception:
-                pass
-            crumb = None
-            try:
-                resp = client.get("https://query1.finance.yahoo.com/v1/test/getcrumb")
-                if resp.status_code == 200 and resp.text and "<" not in resp.text:
-                    crumb = resp.text.strip()
-            except Exception:
-                crumb = None
-            _yahoo["client"] = client
-            _yahoo["crumb"] = crumb
-        return _yahoo["client"], _yahoo["crumb"]
+def _fmp_get(path: str, params: dict[str, Any] | None = None) -> Any:
+    """GET an FMP endpoint; None on any failure or when no key is set."""
+    if not FMP_API_KEY:
+        return None
+    try:
+        resp = httpx.get(
+            f"{_FMP_BASE}/{path}",
+            params={**(params or {}), "apikey": FMP_API_KEY},
+            headers={"User-Agent": "aurum-terminal"},
+            timeout=12,
+        )
+    except Exception:
+        return None
+    if resp.status_code != 200:
+        return None
+    try:
+        data = resp.json()
+    except Exception:
+        return None
+    if isinstance(data, dict) and data.get("Error Message"):
+        return None
+    return data
 
 
-def _reset_yahoo_session() -> None:
-    with _yahoo_lock:
-        client = _yahoo["client"]
-        if client is not None:
-            try:
-                client.close()
-            except Exception:
-                pass
-        _yahoo["client"] = None
-        _yahoo["crumb"] = None
+def _fmp_first(path: str, params: dict[str, Any] | None = None) -> dict:
+    """First row of a list-returning FMP endpoint, or {}."""
+    data = _fmp_get(path, params)
+    if isinstance(data, list) and data:
+        return data[0] or {}
+    return {}
 
 
-def _yahoo_get(url: str, params: dict[str, Any]) -> dict | None:
-    """GET a crumbed Yahoo JSON endpoint, refreshing the crumb once on 401."""
-    for _ in range(2):
-        client, crumb = _yahoo_session()
-        if client is None or not crumb:
-            _reset_yahoo_session()
-            continue
+def _yahoo_chart_meta(symbol: str) -> dict:
+    """Price/name/52-week metadata from Yahoo's chart endpoint.
+
+    The chart API needs no crumb and is not IP-blocked from datacenter
+    hosts, so this keyless call works on the deployed server and gives us
+    the company name plus a basic price/range even without a fundamentals
+    provider configured.
+    """
+
+    def compute() -> dict:
         try:
-            resp = client.get(url, params={**params, "crumb": crumb})
+            resp = httpx.get(
+                f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}",
+                params={"range": "1d", "interval": "1d"},
+                headers=_YF_HEADERS,
+                timeout=10,
+            )
+            if resp.status_code != 200:
+                return {}
+            results = (resp.json().get("chart") or {}).get("result") or []
+            return (results[0].get("meta") if results else {}) or {}
         except Exception:
-            _reset_yahoo_session()
-            continue
-        if resp.status_code == 200:
-            try:
-                return resp.json()
-            except Exception:
-                return None
-        if resp.status_code in (401, 403, 429):
-            _reset_yahoo_session()  # stale crumb or throttle; get a fresh pair
-            continue
-        return None
-    return None
+            return {}
+
+    return _cached(f"chartmeta:{symbol}", 600, compute) or {}
 
 
-def _raw(node: Any, key: str) -> Any:
-    """Pull a value from a Yahoo field that may be a {'raw': ...} wrapper."""
-    if not isinstance(node, dict):
+def _int_or_none(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
         return None
-    value = node.get(key)
-    if isinstance(value, dict):
-        return value.get("raw")
-    return value
+
+
+def _merge_fmp_fundamentals(info: dict, symbol: str) -> None:
+    """Fill ``info`` (Ticker.info-shaped) from FMP.
+
+    Uses only endpoints available on the free tier (quote, profile, and the
+    three annual statements) and derives ratios and EV multiples locally,
+    rather than depending on FMP's premium ratio/key-metrics endpoints. The
+    statement calls are shared (and cached) with the financials and DCF
+    paths, so this adds no extra request budget.
+    """
+    q = _fmp_first(f"quote/{symbol}")
+    p = _fmp_first(f"profile/{symbol}")
+    income = _fmp_annual(symbol, "income-statement")
+    balance = _fmp_annual(symbol, "balance-sheet-statement")
+    cashflow = _fmp_annual(symbol, "cash-flow-statement")
+    inc0 = income[0] if income else {}
+    bal0 = balance[0] if balance else {}
+    cf0 = cashflow[0] if cashflow else {}
+
+    def put(key: str, value: Any) -> None:
+        if value is not None and value != "":
+            info[key] = value
+
+    def num(node: dict, key: str) -> float | None:
+        value = node.get(key)
+        return float(value) if isinstance(value, (int, float)) else None
+
+    # Quote: price and headline figures.
+    put("longName", q.get("name") or p.get("companyName"))
+    put("shortName", q.get("name") or p.get("companyName"))
+    put("currentPrice", q.get("price"))
+    put("regularMarketPrice", q.get("price"))
+    put("marketCap", q.get("marketCap") or p.get("mktCap"))
+    put("trailingPE", q.get("pe"))
+    put("trailingEps", q.get("eps"))
+    put("fiftyTwoWeekHigh", q.get("yearHigh"))
+    put("fiftyTwoWeekLow", q.get("yearLow"))
+    put("volume", q.get("volume"))
+    put("averageVolume", q.get("avgVolume"))
+    put("sharesOutstanding", q.get("sharesOutstanding"))
+
+    # Profile: identity and qualitative fields.
+    put("currency", p.get("currency"))
+    put("financialCurrency", p.get("currency"))
+    put("sector", p.get("sector"))
+    put("industry", p.get("industry"))
+    put("beta", p.get("beta"))
+    put("website", p.get("website"))
+    put("longBusinessSummary", p.get("description"))
+    put("fullTimeEmployees", _int_or_none(p.get("fullTimeEmployees")))
+    put("dividendRate", p.get("lastDiv"))
+
+    # Absolutes straight from the statements.
+    revenue = num(inc0, "revenue")
+    ebitda = num(inc0, "ebitda")
+    net_income = num(inc0, "netIncome")
+    equity = num(bal0, "totalStockholdersEquity")
+    total_debt = num(bal0, "totalDebt")
+    cash = num(bal0, "cashAndCashEquivalents")
+    put("totalRevenue", revenue)
+    put("ebitda", ebitda)
+    put("totalDebt", total_debt)
+    put("totalCash", cash)
+    put("freeCashflow", num(cf0, "freeCashFlow"))
+
+    # Ratios and EV multiples, derived (fractions, matching yfinance).
+    if net_income is not None and revenue:
+        put("profitMargins", net_income / revenue)
+    if net_income is not None and equity:
+        put("returnOnEquity", net_income / equity)
+    market_cap = info.get("marketCap")
+    if market_cap and total_debt is not None and cash is not None:
+        enterprise_value = market_cap + total_debt - cash
+        if ebitda:
+            put("enterpriseToEbitda", enterprise_value / ebitda)
+        if revenue:
+            put("enterpriseToRevenue", enterprise_value / revenue)
+
+
+def _fmp_annual(symbol: str, kind: str) -> list[dict]:
+    """Up to four years of an FMP annual statement (newest first), or []."""
+    data = _cached(
+        f"fmpstmt:{kind}:{symbol}",
+        3600,
+        lambda: _fmp_get(f"{kind}/{symbol}", {"period": "annual", "limit": 4}) or None,
+    )
+    return data if isinstance(data, list) else []
 
 
 def _fetch_fundamentals(symbol: str) -> dict:
-    """Normalized fundamentals dict with the same keys as ``Ticker.info``."""
-    data = _yahoo_get(
-        f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{symbol}",
-        {"modules": ",".join(_QS_MODULES)},
-    )
+    """Normalized fundamentals (Ticker.info-shaped) from the best source.
+
+    Layered so it degrades gracefully:
+      1. Yahoo chart metadata (keyless, works on cloud hosts) for name,
+         price, 52-week range, and volume.
+      2. FMP for the full fundamental set when ``FMP_API_KEY`` is set.
+      3. yfinance ``.info`` as a fallback for local development, where the
+         crumb endpoint is not IP-blocked.
+    """
     info: dict[str, Any] = {}
-    result = None
-    if data:
-        results = (data.get("quoteSummary") or {}).get("result")
-        if results:
-            result = results[0]
 
-    if result:
-        price = result.get("price") or {}
-        detail = result.get("summaryDetail") or {}
-        fin = result.get("financialData") or {}
-        stats = result.get("defaultKeyStatistics") or {}
-        profile = result.get("summaryProfile") or result.get("assetProfile") or {}
+    meta = _yahoo_chart_meta(symbol)
+    if meta:
+        info["longName"] = meta.get("longName")
+        info["shortName"] = meta.get("shortName")
+        info["currency"] = meta.get("currency")
+        info["financialCurrency"] = meta.get("currency")
+        info["currentPrice"] = meta.get("regularMarketPrice")
+        info["regularMarketPrice"] = meta.get("regularMarketPrice")
+        info["fiftyTwoWeekHigh"] = meta.get("fiftyTwoWeekHigh")
+        info["fiftyTwoWeekLow"] = meta.get("fiftyTwoWeekLow")
+        info["volume"] = meta.get("regularMarketVolume")
 
-        info["longName"] = price.get("longName")
-        info["shortName"] = price.get("shortName")
-        info["currency"] = price.get("currency") or fin.get("financialCurrency")
-        info["financialCurrency"] = fin.get("financialCurrency") or price.get("currency")
-        info["marketCap"] = _raw(price, "marketCap") or _raw(detail, "marketCap")
-        info["currentPrice"] = _raw(fin, "currentPrice") or _raw(price, "regularMarketPrice")
-        info["regularMarketPrice"] = _raw(price, "regularMarketPrice")
-        info["trailingPE"] = _raw(detail, "trailingPE")
-        info["forwardPE"] = _raw(detail, "forwardPE") or _raw(stats, "forwardPE")
-        info["trailingEps"] = _raw(stats, "trailingEps")
-        info["beta"] = _raw(detail, "beta") or _raw(stats, "beta")
-        info["dividendRate"] = _raw(detail, "dividendRate")
-        info["fiftyTwoWeekHigh"] = _raw(detail, "fiftyTwoWeekHigh")
-        info["fiftyTwoWeekLow"] = _raw(detail, "fiftyTwoWeekLow")
-        info["volume"] = _raw(detail, "volume") or _raw(price, "regularMarketVolume")
-        info["averageVolume"] = _raw(detail, "averageVolume")
-        info["totalRevenue"] = _raw(fin, "totalRevenue")
-        info["profitMargins"] = _raw(fin, "profitMargins") or _raw(stats, "profitMargins")
-        info["returnOnEquity"] = _raw(fin, "returnOnEquity")
-        info["freeCashflow"] = _raw(fin, "freeCashflow")
-        info["ebitda"] = _raw(fin, "ebitda")
-        info["enterpriseToEbitda"] = _raw(stats, "enterpriseToEbitda")
-        info["enterpriseToRevenue"] = _raw(stats, "enterpriseToRevenue")
-        info["totalDebt"] = _raw(fin, "totalDebt")
-        info["totalCash"] = _raw(fin, "totalCash")
-        info["sharesOutstanding"] = _raw(stats, "sharesOutstanding")
-        info["targetMeanPrice"] = _raw(fin, "targetMeanPrice")
-        info["recommendationKey"] = fin.get("recommendationKey")
-        info["numberOfAnalystOpinions"] = _raw(fin, "numberOfAnalystOpinions")
-        info["sector"] = profile.get("sector")
-        info["industry"] = profile.get("industry")
-        info["fullTimeEmployees"] = profile.get("fullTimeEmployees")
-        info["website"] = profile.get("website")
-        info["longBusinessSummary"] = profile.get("longBusinessSummary")
-
-    # Fall back to the lighter v7 quote endpoint for anything still missing
-    # (and as the whole payload if quoteSummary was unavailable).
-    if not info.get("trailingPE") or not info.get("longName"):
-        quote_data = _yahoo_get(
-            "https://query1.finance.yahoo.com/v7/finance/quote", {"symbols": symbol}
-        )
-        quotes = ((quote_data or {}).get("quoteResponse") or {}).get("result") or []
-        if quotes:
-            q = quotes[0]
-            info.setdefault("longName", q.get("longName"))
-            info["longName"] = info.get("longName") or q.get("longName") or q.get("shortName")
-            info.setdefault("shortName", q.get("shortName"))
-            info["currency"] = info.get("currency") or q.get("currency")
-            info["marketCap"] = info.get("marketCap") or q.get("marketCap")
-            info["regularMarketPrice"] = info.get("regularMarketPrice") or q.get("regularMarketPrice")
-            info["currentPrice"] = info.get("currentPrice") or q.get("regularMarketPrice")
-            info["trailingPE"] = info.get("trailingPE") or q.get("trailingPE")
-            info["forwardPE"] = info.get("forwardPE") or q.get("forwardPE")
-            info["trailingEps"] = info.get("trailingEps") or q.get("epsTrailingTwelveMonths")
-            info["fiftyTwoWeekHigh"] = info.get("fiftyTwoWeekHigh") or q.get("fiftyTwoWeekHigh")
-            info["fiftyTwoWeekLow"] = info.get("fiftyTwoWeekLow") or q.get("fiftyTwoWeekLow")
-            info["volume"] = info.get("volume") or q.get("regularMarketVolume")
-            info["averageVolume"] = info.get("averageVolume") or q.get("averageDailyVolume3Month")
-            if not info.get("dividendRate") and q.get("trailingAnnualDividendRate"):
-                info["dividendRate"] = q.get("trailingAnnualDividendRate")
+    if FMP_API_KEY:
+        _merge_fmp_fundamentals(info, symbol)
+    else:
+        # Local-dev fallback: yfinance's crumb path works off cloud IPs.
+        yf_info = _safe(lambda: yf.Ticker(symbol).info, default={}) or {}
+        for key, value in yf_info.items():
+            if value is not None:
+                info[key] = value
 
     return {k: v for k, v in info.items() if v is not None}
 
@@ -427,7 +463,7 @@ def get_key_stats(raw_ticker: str) -> dict[str, Any] | None:
     }
 
 
-# Curated line items per statement: (statement key, [(yfinance row, label)]).
+# Curated line items per statement: (yfinance row, label).
 _STATEMENT_ROWS = {
     "income": [
         ("Total Revenue", "Total Revenue"),
@@ -452,6 +488,103 @@ _STATEMENT_ROWS = {
     ],
 }
 
+# Curated line items per statement for FMP: (FMP field, label). Endpoint
+# path keyed alongside so the fetch and mapping stay together.
+_FMP_STATEMENTS = {
+    "income": (
+        "income-statement",
+        [
+            ("revenue", "Total Revenue"),
+            ("grossProfit", "Gross Profit"),
+            ("operatingIncome", "Operating Income"),
+            ("ebitda", "EBITDA"),
+            ("netIncome", "Net Income"),
+        ],
+    ),
+    "balance": (
+        "balance-sheet-statement",
+        [
+            ("totalAssets", "Total Assets"),
+            ("totalLiabilities", "Total Liabilities"),
+            ("totalStockholdersEquity", "Stockholders' Equity"),
+            ("cashAndCashEquivalents", "Cash & Equivalents"),
+            ("totalDebt", "Total Debt"),
+        ],
+    ),
+    "cash": (
+        "cash-flow-statement",
+        [
+            ("operatingCashFlow", "Operating Cash Flow"),
+            ("netCashUsedForInvestingActivites", "Investing Cash Flow"),
+            ("netCashUsedProvidedByFinancingActivities", "Financing Cash Flow"),
+            ("capitalExpenditure", "Capital Expenditure"),
+            ("freeCashFlow", "Free Cash Flow"),
+        ],
+    ),
+}
+
+
+def _financials_from_fmp(symbol: str, statement: str) -> dict[str, Any] | None:
+    path, field_map = _FMP_STATEMENTS[statement]
+    periods = _fmp_annual(symbol, path)
+    if not periods:
+        return None
+    years = [str(p.get("calendarYear") or "") for p in periods]
+    rows = []
+    for field, label in field_map:
+        values = []
+        for period in periods:
+            value = period.get(field)
+            values.append(round(float(value), 2) if isinstance(value, (int, float)) else None)
+        if any(v is not None for v in values):
+            rows.append({"label": label, "values": values})
+    if not rows:
+        return None
+    return {
+        "ticker": symbol,
+        "statement": statement,
+        "currency": periods[0].get("reportedCurrency")
+        or _get_info(symbol).get("financialCurrency")
+        or "USD",
+        "periods": years,
+        "rows": rows,
+    }
+
+
+def _financials_from_yfinance(symbol: str, statement: str) -> dict[str, Any] | None:
+    ticker = yf.Ticker(symbol)
+    frame = _safe(
+        lambda: {
+            "income": ticker.income_stmt,
+            "balance": ticker.balance_sheet,
+            "cash": ticker.cashflow,
+        }[statement]
+    )
+    if frame is None or frame.empty:
+        return None
+    columns = list(frame.columns)[:4]
+    rows = []
+    for source_row, label in _STATEMENT_ROWS[statement]:
+        if source_row not in frame.index:
+            continue
+        values = []
+        for column in columns:
+            value = _safe(lambda: float(frame.loc[source_row, column]))
+            values.append(round(value, 2) if value is not None else None)
+        if any(v is not None for v in values):
+            rows.append({"label": label, "values": values})
+    if not rows:
+        return None
+    return {
+        "ticker": symbol,
+        "statement": statement,
+        "currency": _get_info(symbol).get("financialCurrency")
+        or _get_info(symbol).get("currency")
+        or "USD",
+        "periods": [str(getattr(c, "year", c)) for c in columns],
+        "rows": rows,
+    }
+
 
 def get_financials(raw_ticker: str, statement: str) -> dict[str, Any] | None:
     """A curated annual statement (up to four fiscal years, newest first)."""
@@ -460,38 +593,9 @@ def get_financials(raw_ticker: str, statement: str) -> dict[str, Any] | None:
         return None
 
     def compute() -> dict[str, Any] | None:
-        ticker = yf.Ticker(symbol)
-        frame = _safe(
-            lambda: {
-                "income": ticker.income_stmt,
-                "balance": ticker.balance_sheet,
-                "cash": ticker.cashflow,
-            }[statement]
-        )
-        if frame is None or frame.empty:
-            return None
-        columns = list(frame.columns)[:4]
-        rows = []
-        for source_row, label in _STATEMENT_ROWS[statement]:
-            if source_row not in frame.index:
-                continue
-            values = []
-            for column in columns:
-                value = _safe(lambda: float(frame.loc[source_row, column]))
-                values.append(round(value, 2) if value is not None else None)
-            if any(v is not None for v in values):
-                rows.append({"label": label, "values": values})
-        if not rows:
-            return None
-        return {
-            "ticker": symbol,
-            "statement": statement,
-            "currency": _get_info(symbol).get("financialCurrency")
-            or _get_info(symbol).get("currency")
-            or "USD",
-            "periods": [str(getattr(c, "year", c)) for c in columns],
-            "rows": rows,
-        }
+        if FMP_API_KEY:
+            return _financials_from_fmp(symbol, statement)
+        return _financials_from_yfinance(symbol, statement)
 
     return _cached(f"financials:{symbol}:{statement}", 3600, compute)
 
@@ -544,12 +648,31 @@ def get_dcf_inputs(raw_ticker: str) -> dict[str, Any] | None:
         info = _get_info(symbol)
 
         fcf_history: list[dict[str, Any]] = []
-        cash_flow = _safe(lambda: ticker.cashflow)
-        if cash_flow is not None and not cash_flow.empty and "Free Cash Flow" in cash_flow.index:
-            for column in list(cash_flow.columns)[:4]:
-                value = _safe(lambda: float(cash_flow.loc["Free Cash Flow", column]))
-                if value is not None:
-                    fcf_history.append({"year": int(getattr(column, "year", 0)), "value": value})
+        net_debt = 0.0
+        if FMP_API_KEY:
+            for row in _fmp_annual(symbol, "cash-flow-statement"):
+                value = row.get("freeCashFlow")
+                year = _int_or_none(row.get("calendarYear"))
+                if value is not None and year:
+                    fcf_history.append({"year": year, "value": float(value)})
+            balance = _fmp_annual(symbol, "balance-sheet-statement")
+            if balance:
+                b0 = balance[0]
+                if b0.get("netDebt") is not None:
+                    net_debt = float(b0["netDebt"])
+                else:
+                    net_debt = float(b0.get("totalDebt") or 0) - float(
+                        b0.get("cashAndCashEquivalents") or 0
+                    )
+        else:
+            cash_flow = _safe(lambda: ticker.cashflow)
+            if cash_flow is not None and not cash_flow.empty and "Free Cash Flow" in cash_flow.index:
+                for column in list(cash_flow.columns)[:4]:
+                    value = _safe(lambda: float(cash_flow.loc["Free Cash Flow", column]))
+                    if value is not None:
+                        fcf_history.append({"year": int(getattr(column, "year", 0)), "value": value})
+            net_debt = float(info.get("totalDebt") or 0) - float(info.get("totalCash") or 0)
+
         fcf_history.sort(key=lambda row: row["year"])
 
         base_fcf = info.get("freeCashflow")
@@ -565,7 +688,6 @@ def get_dcf_inputs(raw_ticker: str) -> dict[str, Any] | None:
                 cagr = ((fcf_history[-1]["value"] / fcf_history[0]["value"]) ** (1 / years) - 1) * 100
                 suggested_growth = round(min(max(cagr, 2.0), 20.0), 1)
 
-        net_debt = float(info.get("totalDebt") or 0) - float(info.get("totalCash") or 0)
         shares = info.get("sharesOutstanding") or _safe(lambda: fast_info.shares)
 
         return {

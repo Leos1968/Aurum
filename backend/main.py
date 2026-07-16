@@ -85,38 +85,3 @@ app.include_router(search.router)
 def health() -> dict[str, str]:
     """Liveness probe used by deployment platforms and the frontend."""
     return {"status": "ok"}
-
-
-@app.get("/api/debug/yahoo")
-def debug_yahoo() -> dict:
-    """Temporary: report what the Yahoo crumb handshake sees from this host."""
-    import httpx as _httpx
-
-    from services import market_data as _md
-
-    report: dict = {}
-    _md._reset_yahoo_session()
-    client, crumb = _md._yahoo_session()
-    report["crumb"] = (crumb[:12] + "…") if crumb else None
-    report["crumb_ok"] = bool(crumb)
-    # raw getcrumb probe
-    try:
-        c = _httpx.Client(headers=_md._YF_HEADERS, timeout=10, follow_redirects=True)
-        c.get("https://fc.yahoo.com")
-        r = c.get("https://query1.finance.yahoo.com/v1/test/getcrumb")
-        report["getcrumb_status"] = r.status_code
-        report["getcrumb_body"] = r.text[:60]
-    except Exception as exc:
-        report["getcrumb_error"] = f"{type(exc).__name__}: {exc}"[:120]
-    # quoteSummary probe
-    if crumb and client is not None:
-        try:
-            r = client.get(
-                "https://query1.finance.yahoo.com/v10/finance/quoteSummary/AAPL",
-                params={"modules": "price", "crumb": crumb},
-            )
-            report["quoteSummary_status"] = r.status_code
-            report["quoteSummary_body"] = r.text[:80]
-        except Exception as exc:
-            report["quoteSummary_error"] = f"{type(exc).__name__}: {exc}"[:120]
-    return report

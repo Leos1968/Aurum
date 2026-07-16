@@ -14,3 +14,9 @@ services:
         value: 3.12.10
       - key: FRONTEND_ORIGIN
         sync: false
+      # Fundamentals provider. Yahoo's fundamentals endpoint is blocked from
+      # datacenter IPs, so key statistics, financial statements, and the
+      # DCF/LBO/comps inputs need this. Free key; the app runs without it
+      # but those sections stay blank.
+      - key: FMP_API_KEY
+        sync: false

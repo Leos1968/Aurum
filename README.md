@@ -65,7 +65,13 @@ The app is now at http://localhost:3000. Type a ticker such as AAPL into the sea
 Both services run locally with zero configuration, the defaults point at each other. To override, copy the example files and edit:
 
 - `frontend/.env.example` to `frontend/.env.local`, sets `NEXT_PUBLIC_API_URL` (default http://localhost:8000)
-- `backend/.env.example` to `backend/.env`, sets `FRONTEND_ORIGIN`, the extra origin allowed by CORS in production
+- `backend/.env.example` to `backend/.env`, sets `FRONTEND_ORIGIN` (the origins allowed by CORS in production, comma-separated) and `FMP_API_KEY`
+
+### A note on data sources
+
+Prices, charts, the market tape, movers, sector performance, and search come from Yahoo and need no API key, including from a deployed host.
+
+Fundamentals are different. Yahoo's fundamentals endpoint is crumb-gated and returns HTTP 429 to datacenter IPs, so it works on a laptop but not from a cloud host like Render. Key statistics, financial statements, and the DCF, LBO, and comps model inputs therefore come from Financial Modeling Prep when `FMP_API_KEY` is set. A free key is enough. Without one the app still runs, and locally it falls back to yfinance, but on a deployed host those sections stay blank.
 
 ## Deployment
 
