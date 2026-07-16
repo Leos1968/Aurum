@@ -1,12 +1,13 @@
-name: Keep API warm
+name: Keep API warm & cache primed
 
-# Render's free tier spins the API dyno down after ~15 minutes idle, and
-# the cold start costs the next visitor ~50 seconds. Pinging the health
-# endpoint on a schedule keeps it awake so first loads stay fast.
-#
-# GitHub delays scheduled runs under load, so the effective interval is
-# looser than the cron; every ~10 minutes keeps a 15-minute-idle dyno
-# warm most of the time. Runs can also be triggered manually.
+# Two jobs in one:
+# 1. Ping the Render backend so its free-tier dyno stays awake when GitHub
+#    actually honors the schedule (GitHub delays cron on quiet repos, so
+#    this alone is not the availability story).
+# 2. Warm the Vercel edge-cache proxy for the dashboard and the most
+#    popular tickers. Visitors are served from that cache instantly with
+#    stale-while-revalidate, so even when the backend IS cold, the site
+#    stays fast; this job just keeps the cached data reasonably fresh.
 
 on:
   schedule:
@@ -14,17 +15,33 @@ on:
   workflow_dispatch:
 
 jobs:
-  ping:
+  warm:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping /api/health
+      - name: Wake backend
         run: |
           for attempt in 1 2 3; do
             code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 90 \
               https://aurum-api-bqrb.onrender.com/api/health)
-            echo "Attempt $attempt: HTTP $code"
-            if [ "$code" = "200" ]; then exit 0; fi
+            echo "Backend attempt $attempt: HTTP $code"
+            if [ "$code" = "200" ]; then break; fi
             sleep 15
           done
-          echo "Health check did not return 200 after 3 attempts"
-          exit 1
+      - name: Prime edge cache
+        run: |
+          base="https://aurum-terminal.vercel.app/api/aurum"
+          paths=(
+            "api/market/tape"
+            "api/market/sectors"
+            "api/market/movers?kind=gainers"
+            "api/market/movers?kind=losers"
+            "api/market/movers?kind=actives"
+            "api/market/news"
+          )
+          for t in AAPL MSFT NVDA TSLA AMZN GOOGL; do
+            paths+=("api/company/$t" "api/company/$t/stats" "api/company/$t/history?range=1Y")
+          done
+          for p in "${paths[@]}"; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 75 "$base/$p")
+            echo "$p -> $code"
+          done

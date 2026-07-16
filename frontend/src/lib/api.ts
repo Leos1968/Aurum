@@ -1,4 +1,8 @@
-export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+// All requests go through the same-origin /api/aurum proxy, which serves
+// from Vercel's global cache (stale-while-revalidate) so visitors never
+// wait on the backend's free-tier cold start. The proxy forwards to the
+// FastAPI service (BACKEND_URL / localhost in dev) on the server side.
+export const API_URL = "/api/aurum";
 
 /** Direct-download URL for the formula-driven Excel model. */
 export const excelExportUrl = (symbol: string) =>
