@@ -156,29 +156,52 @@ export class ApiError extends Error {
   }
 }
 
+// The proxy answers 503 while the free-tier backend cold-starts, which on
+// Render can take 40-60s. Retry against a wall-clock deadline that outlasts a
+// full spin-up (rather than a fixed attempt count, which a slow cold start
+// silently outlives) so a first-of-the-day visitor watches the page fill in
+// on its own instead of landing on a stuck error. Backoff is exponential and
+// capped. Only the failure path waits — a healthy request returns immediately.
+const WARMING_RETRY_BUDGET_MS = 60_000;
+const WARMING_RETRY_MIN_MS = 1_200;
+const WARMING_RETRY_MAX_MS = 5_000;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function request<T>(path: string): Promise<T> {
-  let res: Response;
-  try {
-    res = await fetch(`${API_URL}${path}`, { cache: "no-store" });
-  } catch {
-    throw new ApiError(
-      "Cannot reach the Aurum API. Make sure the backend is running.",
-      0,
-    );
-  }
-
-  if (!res.ok) {
-    let message = "Something went wrong fetching market data.";
+  const deadline = Date.now() + WARMING_RETRY_BUDGET_MS;
+  for (let attempt = 0; ; attempt++) {
+    let res: Response;
     try {
-      const body = (await res.json()) as { detail?: unknown };
-      if (typeof body.detail === "string") message = body.detail;
+      res = await fetch(`${API_URL}${path}`, { cache: "no-store" });
     } catch {
-      // Non-JSON error body; keep the generic message.
+      throw new ApiError(
+        "Cannot reach the Aurum API. Make sure the backend is running.",
+        0,
+      );
     }
-    throw new ApiError(message, res.status);
-  }
 
-  return (await res.json()) as T;
+    // 503 is the proxy's "backend is cold-starting" signal. Keep retrying with
+    // backoff until the deadline so the page recovers as the dyno wakes.
+    if (res.status === 503 && Date.now() < deadline) {
+      const delay = Math.min(WARMING_RETRY_MIN_MS * 2 ** attempt, WARMING_RETRY_MAX_MS);
+      await sleep(delay);
+      continue;
+    }
+
+    if (!res.ok) {
+      let message = "Something went wrong fetching market data.";
+      try {
+        const body = (await res.json()) as { detail?: unknown };
+        if (typeof body.detail === "string") message = body.detail;
+      } catch {
+        // Non-JSON error body; keep the generic message.
+      }
+      throw new ApiError(message, res.status);
+    }
+
+    return (await res.json()) as T;
+  }
 }
 
 const ticker = (raw: string) => encodeURIComponent(raw.trim().toUpperCase());
