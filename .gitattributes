@@ -1,0 +1,13 @@
+# Treat binary assets as binary so end-of-line conversion (the local
+# core.autocrlf=true) can never rewrite — and corrupt — them on checkout.
+*.pdf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
